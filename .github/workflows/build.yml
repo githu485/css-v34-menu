@@ -15,10 +15,15 @@ jobs:
       - name: Download ImGui
         run: git clone --depth 1 --branch v1.90.9 https://github.com/ocornut/imgui.git
         
-      - name: Download DX8 Backend
+      - name: Download DX8 Backend & Patch
         run: |
           curl -L -o imgui_impl_dx8.cpp https://raw.githubusercontent.com/KoMaR1911/C4USMultiHack-Metin2/main/EngineX-Pro/ImGui/imgui_impl_dx8.cpp
           curl -L -o imgui_impl_dx8.h https://raw.githubusercontent.com/KoMaR1911/C4USMultiHack-Metin2/main/EngineX-Pro/ImGui/imgui_impl_dx8.h
+          
+          # Автоматически исправляем ошибки старого кода под новый компилятор
+          sed -i 's/SetPixelShader(NULL)/SetPixelShader(0)/g' imgui_impl_dx8.cpp
+          sed -i 's/goto cleanup;//g' imgui_impl_dx8.cpp
+          sed -i 's/cleanup://g' imgui_impl_dx8.cpp
           
       - name: Download DirectX 8 SDK
         run: |
