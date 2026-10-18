@@ -8,9 +8,12 @@ if (NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "compile as Win32 (x86)!")
 endif()
 
+# Включаем статическую линковку (вшиваем библиотеки внутрь DLL)
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+
 add_library(css_v34_menu SHARED dllmain.cpp)
 
-# Принудительно задаем имя файла без приставки lib и с расширением .dll
+# Убираем префикс lib и ставим расширение .dll
 set_target_properties(css_v34_menu PROPERTIES PREFIX "" SUFFIX ".dll")
 
 target_include_directories(css_v34_menu PRIVATE 
