@@ -5,37 +5,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
       - name: Update packages
         run: sudo apt-get update
-        
       - name: Install MinGW
         run: sudo apt-get install -y mingw-w64
-        
-      - name: Download ImGui
-        run: git clone --depth 1 --branch v1.90.9 https://github.com/ocornut/imgui.git
-        
-      - name: Download DX8 Backend & Patch
-        run: |
-          curl -L -o imgui_impl_dx8.cpp https://raw.githubusercontent.com/KoMaR1911/C4USMultiHack-Metin2/main/EngineX-Pro/ImGui/imgui_impl_dx8.cpp
-          curl -L -o imgui_impl_dx8.h https://raw.githubusercontent.com/KoMaR1911/C4USMultiHack-Metin2/main/EngineX-Pro/ImGui/imgui_impl_dx8.h
-          
-          # Автоматически исправляем ошибки старого кода под новый компилятор
-          sed -i 's/SetPixelShader(NULL)/SetPixelShader(0)/g' imgui_impl_dx8.cpp
-          sed -i 's/goto cleanup;//g' imgui_impl_dx8.cpp
-          sed -i 's/cleanup://g' imgui_impl_dx8.cpp
-          
-      - name: Download DirectX 8 SDK
-        run: |
-          wget https://github.com/TheSuperHackers/min-dx8-sdk/archive/refs/heads/master.zip
-          unzip master.zip
-          
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_SIZEOF_VOID_P=4 -DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++ -DCMAKE_CXX_FLAGS="-I$(pwd)/min-dx8-sdk-master/include"
-        
+        run: cmake -B build -DCMAKE_SIZEOF_VOID_P=4 -DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++
       - name: Build
         run: cmake --build build
-        
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
