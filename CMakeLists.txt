@@ -1,9 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(css_v34_menu CXX)
 
-# Принудительно указываем, что собираем под Windows
-set(CMAKE_SYSTEM_NAME Windows)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -13,8 +10,8 @@ endif()
 
 add_library(css_v34_menu SHARED dllmain.cpp)
 
-# Убираем префикс "lib" из имени файла
-set_target_properties(css_v34_menu PROPERTIES PREFIX "")
+# Принудительно задаем имя файла без приставки lib и с расширением .dll
+set_target_properties(css_v34_menu PROPERTIES PREFIX "" SUFFIX ".dll")
 
 target_include_directories(css_v34_menu PRIVATE 
     ${CMAKE_SOURCE_DIR}/imgui 
