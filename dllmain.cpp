@@ -1,5 +1,5 @@
 #include <windows.h>
-#include <windowsx.h> // <--- ДОБАВЛЕНО ДЛЯ GET_X_LPARAM
+#include <windowsx.h>
 #include <commctrl.h>
 #include <string>
 
@@ -11,7 +11,7 @@ bool g_testPressed = false;
 bool g_testHover = false;
 bool g_xHover = false;
 
-// Координаты элементов (X1, Y1, X2, Y2)
+// Координаты элементов
 RECT g_toggleRect = { 15, 45, 75, 65 };
 RECT g_testBtnRect = { 15, 80, 115, 110 };
 RECT g_closeBtnRect = { 245, 10, 265, 30 };
@@ -24,7 +24,7 @@ void DrawCustomUI(HDC hdc) {
     RECT clientRect;
     GetClientRect(g_mainWnd, &clientRect);
     
-    // Двойная буферизация
+    // Двойная буферизация (чтобы не мерцало)
     HDC memDC = CreateCompatibleDC(hdc);
     HBITMAP memBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
     HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
@@ -55,7 +55,7 @@ void DrawCustomUI(HDC hdc) {
     SetTextColor(memDC, RGB(255, 255, 255));
     DrawTextA(memDC, "X", -1, &g_closeBtnRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    // Разделитель
+    // Разделитель под шапкой
     RECT lineRect = { 0, 40, clientRect.right, 41 };
     HBRUSH lineBrush = CreateSolidBrush(RGB(60, 60, 70));
     FillRect(memDC, &lineRect, lineBrush);
@@ -68,12 +68,14 @@ void DrawCustomUI(HDC hdc) {
     RoundRect(memDC, g_toggleRect.left, g_toggleRect.top, g_toggleRect.right, g_toggleRect.bottom, 20, 20);
     DeleteObject(toggleBgBrush);
 
+    // Кружок внутри тумблера
     HBRUSH knobBrush = CreateSolidBrush(RGB(255, 255, 255));
     SelectObject(memDC, knobBrush);
     int knobX = g_toggleState ? 55 : 17;
     Ellipse(memDC, knobX, 47, knobX + 16, 63);
     DeleteObject(knobBrush);
 
+    // Текст рядом с тумблером
     SetTextColor(memDC, RGB(200, 200, 200));
     SelectObject(memDC, g_hFont);
     TextOutA(memDC, 85, 46, "Custom Toggle", 13);
@@ -122,7 +124,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hWnd, NULL, FALSE);
             }
 
-            // Отслеживаем уход мыши, чтобы убрать ховер
             TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hWnd, 0 };
             TrackMouseEvent(&tme);
             break;
@@ -146,11 +147,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             else if (PtInRect(&g_testBtnRect, pt)) {
                 g_testPressed = true;
-                SetCapture(hWnd); // Захватываем мышь
+                SetCapture(hWnd);
                 InvalidateRect(hWnd, NULL, FALSE);
             }
             else if (PtInRect(&g_closeBtnRect, pt)) {
-                DestroyWindow(hWnd); // Закрываем по клику на X
+                DestroyWindow(hWnd);
             }
             break;
         }
@@ -158,7 +159,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONUP: {
             if (g_testPressed) {
                 g_testPressed = false;
-                ReleaseCapture(); // Отпускаем мышь
+                ReleaseCapture();
                 InvalidateRect(hWnd, NULL, FALSE);
                 
                 POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -182,7 +183,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (hit == HTCLIENT) {
                 POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
                 ScreenToClient(hWnd, &pt);
-                // Не даем таскать окно, если клик по кнопкам
                 if (PtInRect(&g_toggleRect, pt) || PtInRect(&g_testBtnRect, pt) || PtInRect(&g_closeBtnRect, pt)) {
                     return HTCLIENT;
                 }
@@ -233,8 +233,9 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
 
     RegisterClassExA(&wc);
 
+    // Убрали WS_EX_LAYERED, теперь окно непрозрачное и не лагает
     g_mainWnd = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, 
         "CommandvsMenu", "commandvs",
         WS_POPUP | WS_VISIBLE, 
         100, 100, 280, 130,
@@ -243,7 +244,6 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
 
     if (!g_mainWnd) return 1;
 
-    SetLayeredWindowAttributes(g_mainWnd, 0, 240, LWA_ALPHA);
     CreateThread(nullptr, 0, HotkeyThread, NULL, 0, nullptr);
 
     MSG msg;
