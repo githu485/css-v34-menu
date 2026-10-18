@@ -1,146 +1,137 @@
 #include <windows.h>
-#include <d3d8.h>
-#include <cstdio>
-#include "imgui.h"
-#include "imgui_impl_dx8.h"
-#include "imgui_impl_win32.h"
+#include <commctrl.h>
+#include <string>
 
-#pragma comment(lib, "d3d8.lib")
+#pragma comment(lib, "comctl32.lib")
 
-typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice8*);
-EndScene_t oEndScene = nullptr;
-WNDPROC    oWndProc  = nullptr;
+// Тумблеры
+bool g_bhop = false;
+bool g_wallhack = false;
+bool g_norecoil = false;
+float g_speed = 1.0f;
 
-HWND  g_gameWnd  = nullptr;
-HWND  g_dummyWnd = nullptr;
-bool  g_init      = false;
-bool  g_menuOpen  = false;
+// Идентификаторы для элементов управления
+#define ID_CHECK_BHOP 1001
+#define ID_CHECK_WALL 1002
+#define ID_CHECK_RECOIL 1003
 
-bool  g_bhop      = false;
-bool  g_wallhack  = false;
-bool  g_norecoil  = false;
-float g_speed     = 1.0f;
-float g_fov       = 90.0f;
+HWND g_mainWnd = nullptr;
+HWND g_hCheckBhop = nullptr;
+HWND g_hCheckWall = nullptr;
+HWND g_hCheckRecoil = nullptr;
 
-HWND findGameWindow() {
-    return FindWindowA("Valve001", nullptr);
+// Процедура обработки сообщений окна
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_CREATE:
+            // Создаем шрифт покрасивее
+            HFONT hFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+
+            // Чекбоксы
+            g_hCheckBhop = CreateWindowExA(0, "BUTTON", "Bhop (Auto Jump)", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 20, 200, 25, hWnd, (HMENU)ID_CHECK_BHOP, NULL, NULL);
+            g_hCheckWall = CreateWindowExA(0, "BUTTON", "Wallhack (Glow)", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 50, 200, 25, hWnd, (HMENU)ID_CHECK_WALL, NULL, NULL);
+            g_hCheckRecoil = CreateWindowExA(0, "BUTTON", "No Recoil", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 20, 80, 200, 25, hWnd, (HMENU)ID_CHECK_RECOIL, NULL, NULL);
+
+            // Применяем шрифт
+            SendMessage(g_hCheckBhop, WM_SETFONT, (WPARAM)hFont, TRUE);
+            SendMessage(g_hCheckWall, WM_SETFONT, (WPARAM)hFont, TRUE);
+            SendMessage(g_hCheckRecoil, WM_SETFONT, (WPARAM)hFont, TRUE);
+            
+            // Делаем фон темным
+            SetClassLongPtr(hWnd, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(30, 30, 30)));
+            InvalidateRect(hWnd, NULL, TRUE);
+            break;
+
+        case WM_COMMAND:
+            // Обработка нажатий на чекбоксы
+            if (LOWORD(wParam) == ID_CHECK_BHOP) {
+                g_bhop = (SendMessage(g_hCheckBhop, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            }
+            if (LOWORD(wParam) == ID_CHECK_WALL) {
+                g_wallhack = (SendMessage(g_hCheckWall, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            }
+            if (LOWORD(wParam) == ID_CHECK_RECOIL) {
+                g_norecoil = (SendMessage(g_hCheckRecoil, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            }
+            break;
+
+        case WM_CLOSE:
+            // Вместо закрытия просто прячем окно
+            ShowWindow(hWnd, SW_HIDE);
+            return 0;
+
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
+
+        default:
+            return DefWindowProcA(hWnd, msg, wParam, lParam);
+    }
+    return 0;
 }
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
-
-LRESULT CALLBACK hkWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (g_menuOpen && ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
-
-    if (msg == WM_KEYDOWN && wParam == VK_INSERT) {
-        g_menuOpen = !g_menuOpen;
-    }
-
-    return CallWindowProc(oWndProc, hWnd, msg, wParam, lParam);
-}
-
-HRESULT __stdcall hkEndScene(IDirect3DDevice8* device) {
-    if (!g_init) {
-        D3DDEVICE_CREATION_PARAMETERS cp{};
-        device->GetCreationParameters(&cp);
-        g_gameWnd = cp.hFocusWindow;
-
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO();
-        io.IniFilename = nullptr;
-        io.LogFilename = nullptr;
-
-        ImGui_ImplWin32_Init(g_gameWnd);
-        ImGui_ImplDX8_Init(device); // Инициализация DX8
-
-        oWndProc = (WNDPROC)SetWindowLongPtrA(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)hkWndProc);
-        g_init = true;
-    }
-
-    ImGui_ImplDX8_NewFrame(); // Новый кадр DX8
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
-
-    if (g_menuOpen) {
-        ImGui::SetNextWindowSize(ImVec2(360, 260), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowPos(ImVec2(60, 60), ImGuiCond_FirstUseEver);
-        ImGui::Begin("commandvs // css v34", &g_menuOpen, ImGuiWindowFlags_NoSavedSettings);
-
-        ImGui::TextDisabled("CS:S v34  |  INSERT = menu");
-        ImGui::Separator();
-
-        if (ImGui::BeginTabBar("tabs")) {
-            if (ImGui::BeginTabItem("COMBAT")) {
-                ImGui::Checkbox("Bhop",      &g_bhop);
-                ImGui::Checkbox("No Recoil", &g_norecoil);
-                ImGui::SliderFloat("Speed",  &g_speed, 0.5f, 5.0f, "%.1fx");
-                ImGui::SliderFloat("FOV",    &g_fov,   60.0f, 140.0f, "%.0f");
-                ImGui::EndTabItem();
+// Поток для отслеживания нажатия INSERT (Скрыть/Показать)
+DWORD WINAPI HotkeyThread(LPVOID lpParam) {
+    bool wasPressed = false;
+    while (true) {
+        // Проверяем нажатие клавиши INSERT (VK_INSERT)
+        bool isPressed = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+        
+        // Если клавиша только что была нажата
+        if (isPressed && !wasPressed) {
+            if (g_mainWnd) {
+                if (IsWindowVisible(g_mainWnd)) {
+                    ShowWindow(g_mainWnd, SW_HIDE); // Скрыть
+                } else {
+                    ShowWindow(g_mainWnd, SW_SHOW); // Показать
+                    SetForegroundWindow(g_mainWnd); // Вывести на передний план
+                }
             }
-            if (ImGui::BeginTabItem("VISUAL")) {
-                ImGui::Checkbox("Wallhack (glow)", &g_wallhack);
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
         }
-        ImGui::End();
+        wasPressed = isPressed;
+        Sleep(50); // Проверяем каждые 50 мс, чтобы не грузить процессор
     }
-
-    ImGui::EndFrame();
-    ImGui::Render();
-    ImGui_ImplDX8_RenderDrawData(ImGui::GetDrawData()); // Отрисовка DX8
-
-    return oEndScene(device);
+    return 0;
 }
 
-void createDummyWindow() {
-    WNDCLASSEXA wc{};
-    wc.cbSize        = sizeof(wc);
-    wc.lpfnWndProc   = DefWindowProcA;
-    wc.hInstance     = GetModuleHandleA(nullptr);
-    wc.lpszClassName = "commandvs_dummy";
-    RegisterClassExA(&wc);
-    g_dummyWnd = CreateWindowA("commandvs_dummy", "", WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
-}
+// Поток для создания окна
+DWORD WINAPI GuiThread(LPVOID lpParam) {
+    WNDCLASSEXA wc = { 0 };
+    wc.cbSize = sizeof(WNDCLASSEXA);
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30)); // Темный фон
+    wc.lpszClassName = "CommandvsMenu";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
-void hookEndScene() {
-    createDummyWindow();
-    IDirect3D8* d3d = Direct3DCreate8(D3D_SDK_VERSION); // Создаем DX8
-    if (!d3d) return;
+    if (!RegisterClassExA(&wc)) return 1;
 
-    D3DPRESENT_PARAMETERS pp{};
-    pp.Windowed         = TRUE;
-    pp.SwapEffect       = D3DSWAPEFFECT_DISCARD;
-    pp.hDeviceWindow    = g_dummyWnd;
-    pp.BackBufferFormat = D3DFMT_UNKNOWN;
+    g_mainWnd = CreateWindowExA(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+        "CommandvsMenu", "commandvs // css v34",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 280, 200,
+        NULL, NULL, wc.hInstance, NULL
+    );
 
-    IDirect3DDevice8* dummy = nullptr;
-    HRESULT hr = d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, g_dummyWnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &pp, &dummy);
-    if (FAILED(hr) || !dummy) { d3d->Release(); return; }
+    if (!g_mainWnd) return 1;
 
-    void** vtbl = *(void***)dummy;
-    oEndScene = (EndScene_t)vtbl[35]; // ИНДЕКС 35 ДЛЯ DX8
+    // Запускаем поток для хоткея
+    CreateThread(nullptr, 0, HotkeyThread, NULL, 0, nullptr);
 
-    DWORD oldProt = 0;
-    VirtualProtect(&vtbl[35], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProt);
-    vtbl[35] = (void*)hkEndScene;
-    VirtualProtect(&vtbl[35], sizeof(void*), oldProt, &oldProt);
-
-    dummy->Release();
-    d3d->Release();
-    if (g_dummyWnd) { DestroyWindow(g_dummyWnd); g_dummyWnd = nullptr; }
-}
-
-DWORD WINAPI mainThread(LPVOID) {
-    while (!findGameWindow()) Sleep(150);
-    hookEndScene();
+    MSG msg;
+    while (GetMessageA(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
     return 0;
 }
 
 BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hMod);
-        CreateThread(nullptr, 0, mainThread, hMod, 0, nullptr);
+        // Запускаем GUI в отдельном потоке
+        CreateThread(nullptr, 0, GuiThread, hMod, 0, nullptr);
     }
     return TRUE;
 }
