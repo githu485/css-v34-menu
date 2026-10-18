@@ -148,7 +148,7 @@ void hookEndScene() {
 
     DWORD oldProt = 0;
     VirtualProtect(&vtbl[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProt);
-    vtbl[42] = hkEndScene;
+    vtbl[42] = (void*)hkEndScene; // ИСПРАВЛЕНО ТУТ
     VirtualProtect(&vtbl[42], sizeof(void*), oldProt, &oldProt);
 
     dummy->Release();
