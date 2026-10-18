@@ -1,38 +1,40 @@
 #include <windows.h>
+#include <windowsx.h> // <--- ДОБАВЛЕНО ДЛЯ GET_X_LPARAM
 #include <commctrl.h>
 #include <string>
 
 #pragma comment(lib, "comctl32.lib")
 
 // Состояния наших элементов
-bool g_toggleState = false; // Сам тумблер (Вкл/Выкл)
-bool g_testPressed = false; // Нажата ли кнопка Test
-bool g_testHover = false;   // Наведена ли мышка на Test
-bool g_xHover = false;      // Наведена ли мышка на крестик
+bool g_toggleState = false;
+bool g_testPressed = false;
+bool g_testHover = false;
+bool g_xHover = false;
 
 // Координаты элементов (X1, Y1, X2, Y2)
-RECT g_toggleRect = { 15, 45, 75, 65 };    // Тумблер
-RECT g_testBtnRect = { 15, 80, 115, 110 }; // Кнопка Test
-RECT g_closeBtnRect = { 245, 10, 265, 30 };// Крестик
+RECT g_toggleRect = { 15, 45, 75, 65 };
+RECT g_testBtnRect = { 15, 80, 115, 110 };
+RECT g_closeBtnRect = { 245, 10, 265, 30 };
 
 HWND g_mainWnd = nullptr;
 HFONT g_hFont = nullptr;
 HFONT g_hFontBold = nullptr;
 
 void DrawCustomUI(HDC hdc) {
-    // Двойная буферизация (чтобы не мерцало)
     RECT clientRect;
     GetClientRect(g_mainWnd, &clientRect);
+    
+    // Двойная буферизация
     HDC memDC = CreateCompatibleDC(hdc);
     HBITMAP memBitmap = CreateCompatibleBitmap(hdc, clientRect.right, clientRect.bottom);
-    SelectObject(memDC, memBitmap);
+    HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, memBitmap);
 
     // 1. Заливаем основной фон
     HBRUSH bgBrush = CreateSolidBrush(RGB(25, 25, 30));
     FillRect(memDC, &clientRect, bgBrush);
     DeleteObject(bgBrush);
 
-    // 2. Рисуем шапку (верхние 40 пикселей)
+    // 2. Рисуем шапку
     RECT headerRect = { 0, 0, clientRect.right, 40 };
     HBRUSH headerBrush = CreateSolidBrush(RGB(35, 35, 45));
     FillRect(memDC, &headerRect, headerBrush);
@@ -44,7 +46,7 @@ void DrawCustomUI(HDC hdc) {
     SelectObject(memDC, g_hFontBold);
     TextOutA(memDC, 15, 10, "commandvs // css v34", 19);
 
-    // Рисуем крестик
+    // Крестик
     if (g_xHover) {
         HBRUSH xHoverBrush = CreateSolidBrush(RGB(200, 60, 60));
         FillRect(memDC, &g_closeBtnRect, xHoverBrush);
@@ -53,37 +55,34 @@ void DrawCustomUI(HDC hdc) {
     SetTextColor(memDC, RGB(255, 255, 255));
     DrawTextA(memDC, "X", -1, &g_closeBtnRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    // Разделитель под шапкой
+    // Разделитель
     RECT lineRect = { 0, 40, clientRect.right, 41 };
     HBRUSH lineBrush = CreateSolidBrush(RGB(60, 60, 70));
     FillRect(memDC, &lineRect, lineBrush);
     DeleteObject(lineBrush);
 
-    // 3. Рисуем Тумблер (Switch)
-    // Фон тумблера (зеленый если вкл, серый если выкл)
+    // 3. Тумблер
     HBRUSH toggleBgBrush = CreateSolidBrush(g_toggleState ? RGB(80, 200, 100) : RGB(60, 60, 70));
     SelectObject(memDC, toggleBgBrush);
     SelectObject(memDC, GetStockObject(NULL_PEN));
     RoundRect(memDC, g_toggleRect.left, g_toggleRect.top, g_toggleRect.right, g_toggleRect.bottom, 20, 20);
     DeleteObject(toggleBgBrush);
 
-    // Кружочек внутри тумблера
     HBRUSH knobBrush = CreateSolidBrush(RGB(255, 255, 255));
     SelectObject(memDC, knobBrush);
-    int knobX = g_toggleState ? 55 : 17; // Позиция кружочка (вправо или влево)
+    int knobX = g_toggleState ? 55 : 17;
     Ellipse(memDC, knobX, 47, knobX + 16, 63);
     DeleteObject(knobBrush);
 
-    // Текст рядом с тумблером
     SetTextColor(memDC, RGB(200, 200, 200));
     SelectObject(memDC, g_hFont);
     TextOutA(memDC, 85, 46, "Custom Toggle", 13);
 
-    // 4. Рисуем кнопку Test
+    // 4. Кнопка Test
     HBRUSH btnBgBrush;
-    if (g_testPressed) btnBgBrush = CreateSolidBrush(RGB(40, 40, 50)); // Нажата
-    else if (g_testHover) btnBgBrush = CreateSolidBrush(RGB(70, 70, 80)); // Наведение
-    else btnBgBrush = CreateSolidBrush(RGB(50, 50, 60)); // Обычная
+    if (g_testPressed) btnBgBrush = CreateSolidBrush(RGB(40, 40, 50));
+    else if (g_testHover) btnBgBrush = CreateSolidBrush(RGB(70, 70, 80));
+    else btnBgBrush = CreateSolidBrush(RGB(50, 50, 60));
 
     SelectObject(memDC, btnBgBrush);
     RoundRect(memDC, g_testBtnRect.left, g_testBtnRect.top, g_testBtnRect.right, g_testBtnRect.bottom, 10, 10);
@@ -95,6 +94,8 @@ void DrawCustomUI(HDC hdc) {
 
     // Копируем на экран
     BitBlt(hdc, 0, 0, clientRect.right, clientRect.bottom, memDC, 0, 0, SRCCOPY);
+    
+    SelectObject(memDC, oldBitmap);
     DeleteObject(memBitmap);
     DeleteDC(memDC);
 }
@@ -104,46 +105,52 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CREATE: {
             g_hFont = CreateFontA(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Segoe UI");
             g_hFontBold = CreateFontA(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Segoe UI");
-            
-            // Включаем отслеживание мыши для эффектов наведения
-            TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hWnd, 0 };
-            TrackMouseEvent(&tme);
             break;
         }
 
         case WM_MOUSEMOVE: {
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
+            POINT pt = { x, y };
 
-            // Проверяем наведение на кнопку Test
-            bool newTestHover = (x >= g_testBtnRect.left && x <= g_testBtnRect.right && y >= g_testBtnRect.top && y <= g_testBtnRect.bottom);
-            // Проверяем наведение на крестик
-            bool newXHover = (x >= g_closeBtnRect.left && x <= g_closeBtnRect.right && y >= g_closeBtnRect.top && y <= g_closeBtnRect.bottom);
+            bool newTestHover = PtInRect(&g_testBtnRect, pt);
+            bool newXHover = PtInRect(&g_closeBtnRect, pt);
 
             if (newTestHover != g_testHover || newXHover != g_xHover) {
                 g_testHover = newTestHover;
                 g_xHover = newXHover;
-                InvalidateRect(hWnd, NULL, FALSE); // Перерисовать
+                InvalidateRect(hWnd, NULL, FALSE);
             }
 
+            // Отслеживаем уход мыши, чтобы убрать ховер
             TRACKMOUSEEVENT tme = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, hWnd, 0 };
             TrackMouseEvent(&tme);
             break;
         }
 
-        case WM_LBUTTONDOWN: {
-            int x = GET_X_LPARAM(lParam);
-            int y = GET_Y_LPARAM(lParam);
+        case WM_MOUSELEAVE: {
+            if (g_testHover || g_xHover) {
+                g_testHover = false;
+                g_xHover = false;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+            break;
+        }
 
-            // Клик по тумблеру
-            if (x >= g_toggleRect.left && x <= g_toggleRect.right && y >= g_toggleRect.top && y <= g_toggleRect.bottom) {
+        case WM_LBUTTONDOWN: {
+            POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+
+            if (PtInRect(&g_toggleRect, pt)) {
                 g_toggleState = !g_toggleState;
                 InvalidateRect(hWnd, NULL, FALSE);
             }
-            // Клик по кнопке Test
-            if (g_testHover) {
+            else if (PtInRect(&g_testBtnRect, pt)) {
                 g_testPressed = true;
+                SetCapture(hWnd); // Захватываем мышь
                 InvalidateRect(hWnd, NULL, FALSE);
+            }
+            else if (PtInRect(&g_closeBtnRect, pt)) {
+                DestroyWindow(hWnd); // Закрываем по клику на X
             }
             break;
         }
@@ -151,10 +158,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_LBUTTONUP: {
             if (g_testPressed) {
                 g_testPressed = false;
+                ReleaseCapture(); // Отпускаем мышь
                 InvalidateRect(hWnd, NULL, FALSE);
                 
-                // Действие при отпускании кнопки Test
-                MessageBoxA(hWnd, "Test Button Clicked!", "Info", MB_OK | MB_ICONINFORMATION);
+                POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                if (PtInRect(&g_testBtnRect, pt)) {
+                    MessageBoxA(hWnd, "Test Button Clicked!", "Info", MB_OK | MB_ICONINFORMATION);
+                }
             }
             break;
         }
@@ -168,12 +178,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
 
         case WM_NCHITTEST: {
-            // Позволяем таскать окно, но не за кнопки
             LRESULT hit = DefWindowProc(hWnd, msg, wParam, lParam);
             if (hit == HTCLIENT) {
                 POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
                 ScreenToClient(hWnd, &pt);
-                // Если мышка над кнопками, не даем таскать
+                // Не даем таскать окно, если клик по кнопкам
                 if (PtInRect(&g_toggleRect, pt) || PtInRect(&g_testBtnRect, pt) || PtInRect(&g_closeBtnRect, pt)) {
                     return HTCLIENT;
                 }
@@ -199,7 +208,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
-// Поток для хоткея (INSERT)
 DWORD WINAPI HotkeyThread(LPVOID lpParam) {
     bool wasPressed = false;
     while (true) {
@@ -229,7 +237,7 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         "CommandvsMenu", "commandvs",
         WS_POPUP | WS_VISIBLE, 
-        100, 100, 280, 130, // Высота уменьшена, так как элементы компактнее
+        100, 100, 280, 130,
         NULL, NULL, wc.hInstance, NULL
     );
 
