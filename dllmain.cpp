@@ -4,11 +4,10 @@
 
 #pragma comment(lib, "comctl32.lib")
 
-// Тумблеры
+// Тумблеры (пока просто хранят состояние)
 bool g_bhop = false;
 bool g_wallhack = false;
 bool g_norecoil = false;
-float g_speed = 1.0f;
 
 // Идентификаторы для элементов управления
 #define ID_CHECK_BHOP 1001
@@ -23,8 +22,8 @@ HWND g_hCheckRecoil = nullptr;
 // Процедура обработки сообщений окна
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_CREATE:
-            // Создаем шрифт покрасивее
+        case WM_CREATE: {
+            // Создаем шрифт
             HFONT hFont = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Segoe UI");
 
             // Чекбоксы
@@ -37,13 +36,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SendMessage(g_hCheckWall, WM_SETFONT, (WPARAM)hFont, TRUE);
             SendMessage(g_hCheckRecoil, WM_SETFONT, (WPARAM)hFont, TRUE);
             
-            // Делаем фон темным
+            // Темный фон
             SetClassLongPtr(hWnd, GCLP_HBRBACKGROUND, (LONG_PTR)CreateSolidBrush(RGB(30, 30, 30)));
             InvalidateRect(hWnd, NULL, TRUE);
             break;
+        }
 
         case WM_COMMAND:
-            // Обработка нажатий на чекбоксы
+            // Обработка кликов по чекбоксам
             if (LOWORD(wParam) == ID_CHECK_BHOP) {
                 g_bhop = (SendMessage(g_hCheckBhop, BM_GETCHECK, 0, 0) == BST_CHECKED);
             }
@@ -56,7 +56,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_CLOSE:
-            // Вместо закрытия просто прячем окно
+            // Крестик просто прячет окно
             ShowWindow(hWnd, SW_HIDE);
             return 0;
 
@@ -70,26 +70,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return 0;
 }
 
-// Поток для отслеживания нажатия INSERT (Скрыть/Показать)
+// Поток для отслеживания INSERT
 DWORD WINAPI HotkeyThread(LPVOID lpParam) {
     bool wasPressed = false;
     while (true) {
-        // Проверяем нажатие клавиши INSERT (VK_INSERT)
         bool isPressed = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
         
-        // Если клавиша только что была нажата
         if (isPressed && !wasPressed) {
             if (g_mainWnd) {
                 if (IsWindowVisible(g_mainWnd)) {
-                    ShowWindow(g_mainWnd, SW_HIDE); // Скрыть
+                    ShowWindow(g_mainWnd, SW_HIDE);
                 } else {
-                    ShowWindow(g_mainWnd, SW_SHOW); // Показать
-                    SetForegroundWindow(g_mainWnd); // Вывести на передний план
+                    ShowWindow(g_mainWnd, SW_SHOW);
+                    SetForegroundWindow(g_mainWnd);
                 }
             }
         }
         wasPressed = isPressed;
-        Sleep(50); // Проверяем каждые 50 мс, чтобы не грузить процессор
+        Sleep(50);
     }
     return 0;
 }
@@ -100,7 +98,7 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
     wc.cbSize = sizeof(WNDCLASSEXA);
     wc.lpfnWndProc = WndProc;
     wc.hInstance = GetModuleHandleA(NULL);
-    wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30)); // Темный фон
+    wc.hbrBackground = CreateSolidBrush(RGB(30, 30, 30));
     wc.lpszClassName = "CommandvsMenu";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 
@@ -116,7 +114,7 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
 
     if (!g_mainWnd) return 1;
 
-    // Запускаем поток для хоткея
+    // Запускаем только хоткей
     CreateThread(nullptr, 0, HotkeyThread, NULL, 0, nullptr);
 
     MSG msg;
@@ -130,7 +128,6 @@ DWORD WINAPI GuiThread(LPVOID lpParam) {
 BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hMod);
-        // Запускаем GUI в отдельном потоке
         CreateThread(nullptr, 0, GuiThread, hMod, 0, nullptr);
     }
     return TRUE;
