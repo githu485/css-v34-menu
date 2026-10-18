@@ -5,12 +5,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Update packages
+        run: sudo apt-get update
+        
       - name: Install MinGW
         run: sudo apt-get install -y mingw-w64
+        
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++
+        run: cmake -B build -DCMAKE_SIZEOF_VOID_P=4 -DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++
+        
+      - name: Download ImGui
+        run: git clone --depth 1 --branch v1.90.9 https://github.com/ocornut/imgui.git
+        
       - name: Build
         run: cmake --build build
+        
       - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
