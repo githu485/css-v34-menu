@@ -4,21 +4,17 @@ project(css_v34_menu CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Проверка, что собираем 32-битную версию (x86) для CS:S v34
 if (NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(FATAL_ERROR "compile as Win32 (x86)!")
 endif()
 
-# Наш файл с кодом DLL
 add_library(css_v34_menu SHARED dllmain.cpp)
 
-# Подключаем папки ImGui
 target_include_directories(css_v34_menu PRIVATE 
     ${CMAKE_SOURCE_DIR}/imgui 
     ${CMAKE_SOURCE_DIR}/imgui/backends
 )
 
-# Исходники ImGui
 target_sources(css_v34_menu PRIVATE
     ${CMAKE_SOURCE_DIR}/imgui/imgui.cpp
     ${CMAKE_SOURCE_DIR}/imgui/imgui_draw.cpp
@@ -28,5 +24,4 @@ target_sources(css_v34_menu PRIVATE
     ${CMAKE_SOURCE_DIR}/imgui/backends/imgui_impl_win32.cpp
 )
 
-# Линкуем DirectX 9
-target_link_libraries(css_v34_menu PRIVATE d3d9)
+target_link_libraries(css_v34_menu PRIVATE d3d9 dwmapi gdi32)
