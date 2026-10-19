@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) esp + menu
+// commandvs.cpp — css v34 (build 4044) clean esp
 // cl /EHsc /O2 /MD /D_USRDLL /D_WINDLL commandvs.cpp /link /DLL /OUT:commandvs.dll
 
 #include <windows.h>
@@ -33,7 +33,6 @@ struct VMatrix { float m[4][4]; float* operator[](int i){ return m[i]; } const f
 typedef void* (*CreateInterfaceFn)(const char*, int*);
 void* g_engine = nullptr;
 void* g_entityList = nullptr;
-void* g_client = nullptr;
 void* g_surface = nullptr;
 
 template<typename T> T vf(void* inst, int idx) {
@@ -41,8 +40,7 @@ template<typename T> T vf(void* inst, int idx) {
 }
 
 // ═══════════════════════════════════════════
-//   Vtable indexes — build 4044 (Source 2007)
-//   если что-то не рисуется — крути +/-1
+//   Vtable indexes — build 4044
 // ═══════════════════════════════════════════
 #define VT_ENGINE_LOCALPLAYER   12
 #define VT_ENGINE_SCREENSIZE     5
@@ -51,27 +49,16 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 #define VT_SURF_SETCOLOR        15
-#define VT_SURF_FILLED          17
 #define VT_SURF_OUTLINE         19
-#define VT_SURF_LINE            20
 #define VT_SURF_PAINTTRAVERSE   41
-
-// text — индексы ISurface для v34, проверь если текст не появится
-#define VT_SURF_CREATEFONT      71
-#define VT_SURF_SETGLYPH        72
-#define VT_SURF_SETTEXTFONT     22
-#define VT_SURF_SETTEXTCOLOR    24
-#define VT_SURF_SETTEXTPOS      26
-#define VT_SURF_PRINTTEXT       28
 
 // ═══════════════════════════════════════════
 //   Offsets — CSS v34 (build 4044)
 // ═══════════════════════════════════════════
 namespace Off {
-    constexpr uintptr_t Health    = 0xFC;   // m_iHealth (int)
-    constexpr uintptr_t Team      = 0x98;   // m_iTeamNum (int)
-    constexpr uintptr_t LifeState = 0x79;   // m_lifeState (uint8) — если трупы рисуются, правь сюда
-    constexpr uintptr_t BoneMat   = 0x4E4;  // m_dwBoneMatrix (pointer)
+    constexpr uintptr_t Health    = 0xFC;   // m_iHealth
+    constexpr uintptr_t Origin    = 0x128;  // m_vecOrigin (позиция ног)
+    constexpr uintptr_t BoneMat   = 0x4E4;  // m_dwBoneMatrix
 }
 
 int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
@@ -81,10 +68,23 @@ bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); retu
 void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
 int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
 
+// ═══════════════════════════════════════════
+//   Защита от вылетов (фильтр сущностей)
+// ═══════════════════════════════════════════
+bool IsPlayerEntity(void* ent) {
+    if (!ent || (uintptr_t)ent < 0x10000) return false;
+    // Vtable index 2 = GetClientClass()
+    typedef void* (__thiscall* GetClientClassFn)(void*);
+    void* cc = vf<GetClientClassFn>(ent, 2)(ent);
+    if (!cc) return false;
+    const char* name = *(const char**)((uintptr_t)cc + 0x8);
+    if (!name) return false;
+    // В CSS игроки имеют NetworkName "C_CSPlayer"
+    return (strstr(name, "Player") != nullptr || strstr(name, "player") != nullptr);
+}
+
 int  Ent_Health(void* e) { return *(int*)((uintptr_t)e + Off::Health); }
-int  Ent_MaxHP(void* e)  { return 100; } // в CSS v34 у игрока фикс 100
-int  Ent_Team(void* e)   { return *(int*)((uintptr_t)e + Off::Team); }
-bool Ent_Alive(void* e)  { return *(uint8_t*)((uintptr_t)e + Off::LifeState) == 0; }
+Vector Ent_Origin(void* e) { return *(Vector*)((uintptr_t)e + Off::Origin); }
 matrix3x4_t* Ent_Bones(void* e) {
     uintptr_t p = *(uintptr_t*)((uintptr_t)e + Off::BoneMat);
     return p ? (matrix3x4_t*)p : nullptr;
@@ -115,115 +115,58 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 //   ISurface wrappers
 // ═══════════════════════════════════════════
 void S_SetColor(int r,int g,int b,int a){ typedef void(__thiscall* F)(void*,int,int,int,int); vf<F>(g_surface, VT_SURF_SETCOLOR)(g_surface,r,g,b,a); }
-void S_Fill(int x0,int y0,int x1,int y1){ typedef void(__thiscall* F)(void*,int,int,int,int); vf<F>(g_surface, VT_SURF_FILLED)(g_surface,x0,y0,x1,y1); }
 void S_Outline(int x0,int y0,int x1,int y1){ typedef void(__thiscall* F)(void*,int,int,int,int); vf<F>(g_surface, VT_SURF_OUTLINE)(g_surface,x0,y0,x1,y1); }
-void S_Line(int x0,int y0,int x1,int y1){ typedef void(__thiscall* F)(void*,int,int,int,int); vf<F>(g_surface, VT_SURF_LINE)(g_surface,x0,y0,x1,y1); }
-
-unsigned long S_CreateFont() {
-    typedef unsigned long(__thiscall* F)(void*);
-    return vf<F>(g_surface, VT_SURF_CREATEFONT)(g_surface);
-}
-void S_SetGlyph(unsigned long f, const char* name, int tall, int weight, int flags, int rangeMin, int rangeMax) {
-    typedef void(__thiscall* F)(void*, unsigned long, const char*, int, int, int, int, int);
-    vf<F>(g_surface, VT_SURF_SETGLYPH)(g_surface, f, name, tall, weight, 0, 0, rangeMax);
-}
-void S_SetTextFont(unsigned long f)     { typedef void(__thiscall* F)(void*, unsigned long); vf<F>(g_surface, VT_SURF_SETTEXTFONT)(g_surface, f); }
-void S_SetTextColor(int r,int g,int b,int a){ typedef void(__thiscall* F)(void*,int,int,int,int); vf<F>(g_surface, VT_SURF_SETTEXTCOLOR)(g_surface,r,g,b,a); }
-void S_SetTextPos(int x,int y)          { typedef void(__thiscall* F)(void*,int,int); vf<F>(g_surface, VT_SURF_SETTEXTPOS)(g_surface,x,y); }
-void S_PrintText(const wchar_t* t, int len) {
-    typedef void(__thiscall* F)(void*, const wchar_t*, int, int);
-    vf<F>(g_surface, VT_SURF_PRINTTEXT)(g_surface, t, len, 0);
-}
 
 // ═══════════════════════════════════════════
-//   Fonts
-// ═══════════════════════════════════════════
-unsigned long g_fontName = 0;
-unsigned long g_fontDist = 0;
-bool g_fontsReady = false;
-
-void InitFonts() {
-    if (g_fontsReady) return;
-    g_fontName = S_CreateFont();
-    S_SetGlyph(g_fontName, "Tahoma", 12, 700, 0, 0, 255);
-    g_fontDist = S_CreateFont();
-    S_SetGlyph(g_fontDist, "Tahoma", 11, 500, 0, 0, 255);
-    g_fontsReady = true;
-}
-
-void S_DrawString(unsigned long font, int x, int y, int r,int g,int b, const wchar_t* txt) {
-    if (!font || !txt) return;
-    S_SetTextFont(font);
-    S_SetTextColor(r, g, b, 255);
-    S_SetTextPos(x, y);
-    S_PrintText(txt, (int)wcslen(txt));
-}
-
-void S_DrawStringCenter(unsigned long font, int cx, int y, int r,int g,int b, const wchar_t* txt) {
-    // приблизительная ширина: charCount * (fontTall * 0.55)
-    int w = (int)(wcslen(txt) * 7);
-    S_DrawString(font, cx - w / 2, y, r, g, b, txt);
-}
-
-// ═══════════════════════════════════════════
-//   ESP state
+//   ESP
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
     bool box = true;
-    bool name = false;
-    bool health = false;
-    bool skeleton = false;
-    bool distance = false;
-    bool teamCheck = false;
-    float maxDist = 3000.0f;
     COLORREF boneColor = RGB(232, 168, 56);
 } g_esp;
 
-// ═══════════════════════════════════════════
-//   ESP draw
-// ═══════════════════════════════════════════
 void DrawESP() {
     if (!g_esp.enabled || !Engine_InGame()) return;
-    if (!g_fontsReady) InitFonts();
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
-    void* lpE = Entity_Get(lp);
-    if (!lpE) return;
-    int lpTeam = Ent_Team(lpE);
-    matrix3x4_t* lpB = Ent_Bones(lpE);
-    Vector lpHead = lpB ? BonePos(lpB, 8) : Vector();
 
     int r = GetRValue(g_esp.boneColor);
     int g = GetGValue(g_esp.boneColor);
     int bl = GetBValue(g_esp.boneColor);
+    S_SetColor(r, g, bl, 255);
 
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
+        
         void* e = Entity_Get(i);
         if (!e) continue;
-        if (!Ent_Alive(e)) continue;
-        int hp = Ent_Health(e);
-        if (hp <= 0) continue;
-        if (g_esp.teamCheck && lpTeam > 1 && Ent_Team(e) == lpTeam) continue;
+        
+        // Защита 1: Это игрок? (Отсекает оружие, пропы, декали)
+        if (!IsPlayerEntity(e)) continue;
 
+        // Защита 2: Живой и валидный HP?
+        int hp = Ent_Health(e);
+        if (hp <= 0 || hp > 1000) continue;
+
+        // Берем позицию ног (Origin) и голову (Bone 8)
+        Vector feet = Ent_Origin(e);
         matrix3x4_t* b = Ent_Bones(e);
         if (!b) continue;
-
-        Vector head = BonePos(b, 8);
-        Vector feet = BonePos(b, 0);
-        float dist = 0.0f;
-        if (lpHead.Length() > 0.1f) {
-            dist = (head - lpHead).Length();
-            if (dist > g_esp.maxDist) continue;
+        
+        Vector head = BonePos(b, 8); // head
+        // Если кость головы уехала в 0,0,0 (баг), берем origin + 72 юнита вверх
+        if (head.Length() < 0.1f) {
+            head = feet + Vector(0, 0, 72);
         }
 
         Vector sH, sF;
         if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
+        
         float h = sF.y - sH.y;
-        if (h < 4 || h > 1800) continue;
+        if (h < 4 || h > 1800) continue; // Защита от гигантских/микроскопических боксов
         float w = h * 0.42f;
 
         int x0 = (int)(sH.x - w * 0.5f);
@@ -231,58 +174,8 @@ void DrawESP() {
         int y0 = (int)sH.y;
         int y1 = (int)sF.y;
 
-        // health bar (левее бокса)
-        if (g_esp.health) {
-            float frac = (float)hp / (float)Ent_MaxHP(e);
-            if (frac < 0) frac = 0;
-            if (frac > 1) frac = 1;
-            int barX = x0 - 6;
-            S_SetColor(0, 0, 0, 200);
-            S_Fill(barX - 1, y0 - 1, barX + 3, y1 + 1);
-            int hpH = (int)((y1 - y0) * frac);
-            int hr = frac > 0.6f ? 80 : (frac > 0.3f ? 240 : 230);
-            int hg = frac > 0.6f ? 220 : (frac > 0.3f ? 200 : 70);
-            int hb = frac > 0.6f ? 100 : (frac > 0.3f ? 60  : 70);
-            S_SetColor(hr, hg, hb, 255);
-            S_Fill(barX, y1 - hpH, barX + 2, y1);
-        }
-
-        // box
         if (g_esp.box) {
-            S_SetColor(r, g, bl, 255);
             S_Outline(x0, y0, x1, y1);
-        }
-
-        // skeleton
-        if (g_esp.skeleton) {
-            static const int pairs[][2] = {
-                {8,6},{6,5},{5,0},
-                {6,9},{9,10},{10,11},
-                {6,12},{12,13},{13,14},
-                {0,15},{15,16},{16,17},
-                {0,19},{19,20},{20,21}
-            };
-            S_SetColor(r, g, bl, 200);
-            for (auto& p : pairs) {
-                Vector a = BonePos(b, p[0]);
-                Vector c = BonePos(b, p[1]);
-                Vector sa, sc;
-                if (!WorldToScreen(a, sa) || !WorldToScreen(c, sc)) continue;
-                S_Line((int)sa.x, (int)sa.y, (int)sc.x, (int)sc.y);
-            }
-        }
-
-        // name
-        if (g_esp.name && g_fontName) {
-            const wchar_t* nm = L"player";
-            S_DrawStringCenter(g_fontName, (int)(sH.x), y0 - 14, 240, 240, 245, nm);
-        }
-
-        // distance
-        if (g_esp.distance && g_fontDist) {
-            wchar_t buf[32];
-            swprintf_s(buf, L"%dm", (int)(dist / 50.0f));
-            S_DrawStringCenter(g_fontDist, (int)(sH.x), y1 + 2, r, g, bl, buf);
         }
     }
 }
@@ -302,21 +195,15 @@ namespace P {
     const COLORREF ON        = RGB(232, 168, 56);
     const COLORREF OFF       = RGB(48, 50, 58);
     const COLORREF KNOB      = RGB(240, 241, 246);
-    const COLORREF TRACK     = RGB(34, 36, 44);
-    const COLORREF FILL      = RGB(232, 168, 56);
     const COLORREF CLOSE_H   = RGB(210, 70, 70);
     const COLORREF ROW_HOV   = RGB(24, 26, 32);
     const COLORREF SW_ACTIVE = RGB(240, 241, 246);
 }
 
-// ═══════════════════════════════════════════
-//   Menu state
-// ═══════════════════════════════════════════
-const int WW = 320, WH = 400, HH = 44, TBH = 34;
+const int WW = 320, WH = 280, HH = 44, TBH = 34;
 
 HWND g_wnd = nullptr;
 HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
-int g_tab = 0;
 volatile bool g_closing = false;
 
 COLORREF g_swatches[] = {
@@ -325,7 +212,7 @@ COLORREF g_swatches[] = {
 };
 int g_swatchCount = 8;
 
-enum CtrlType { CTRL_TAB, CTRL_TOGGLE, CTRL_SLIDER, CTRL_COLOR };
+enum CtrlType { CTRL_TOGGLE, CTRL_COLOR };
 struct Ctrl {
     RECT r;
     int type;
@@ -334,7 +221,6 @@ struct Ctrl {
     int id;
 };
 std::vector<Ctrl> g_ctrls;
-Ctrl* g_dragSlider = nullptr;
 
 // ═══════════════════════════════════════════
 //   GDI helpers
@@ -401,51 +287,29 @@ void LayoutUI() {
     g_ctrls.clear();
     int cx = 16;
     int cw = WW - 32;
+    int y = HH + TBH + 16;
 
-    const char* tabNames[] = { "ESP", "SETTINGS" };
-    int tabW = 78;
+    const char* lbl[] = { "Enable ESP", "Box" };
+    bool* vals[] = { &g_esp.enabled, &g_esp.box };
     for (int i = 0; i < 2; i++) {
         Ctrl c;
-        c.r = { cx + i*(tabW+4), HH + 6, cx + i*(tabW+4) + tabW, HH + 28 };
-        c.type = CTRL_TAB;
-        c.data = (void*)(uintptr_t)i;
-        c.label = tabNames[i];
+        c.r = { cx, y, cx + cw, y + 26 };
+        c.type = CTRL_TOGGLE;
+        c.data = vals[i];
+        c.label = lbl[i];
         c.id = i;
         g_ctrls.push_back(c);
+        y += 34;
     }
 
-    int y = HH + TBH + 12;
-    if (g_tab == 0) {
-        const char* lbl[] = { "Enabled", "Box", "Name", "Health", "Skeleton", "Distance", "Team Check" };
-        bool* vals[] = { &g_esp.enabled, &g_esp.box, &g_esp.name, &g_esp.health,
-                         &g_esp.skeleton, &g_esp.distance, &g_esp.teamCheck };
-        for (int i = 0; i < 7; i++) {
-            Ctrl c;
-            c.r = { cx, y, cx + cw, y + 26 };
-            c.type = CTRL_TOGGLE;
-            c.data = vals[i];
-            c.label = lbl[i];
-            c.id = i;
-            g_ctrls.push_back(c);
-            y += 30;
-        }
-        Ctrl sl;
-        sl.r = { cx, y, cx + cw, y + 40 };
-        sl.type = CTRL_SLIDER;
-        sl.data = &g_esp.maxDist;
-        sl.label = "Max Distance";
-        sl.id = 0;
-        g_ctrls.push_back(sl);
-        y += 46;
-
-        for (int i = 0; i < g_swatchCount; i++) {
-            Ctrl sw;
-            sw.r = { cx + i*32, y, cx + i*32 + 24, y + 24 };
-            sw.type = CTRL_COLOR;
-            sw.data = (void*)(uintptr_t)i;
-            sw.id = i;
-            g_ctrls.push_back(sw);
-        }
+    y += 10;
+    for (int i = 0; i < g_swatchCount; i++) {
+        Ctrl sw;
+        sw.r = { cx + i*32, y, cx + i*32 + 24, y + 24 };
+        sw.type = CTRL_COLOR;
+        sw.data = (void*)(uintptr_t)i;
+        sw.id = i;
+        g_ctrls.push_back(sw);
     }
 }
 
@@ -454,7 +318,6 @@ void LayoutUI() {
 // ═══════════════════════════════════════════
 void DrawUI(HDC dc) {
     RECT cr; GetClientRect(g_wnd, &cr);
-
     fillRect(dc, cr, P::BG);
 
     RECT hr = { 0, 0, cr.right, HH };
@@ -462,7 +325,7 @@ void DrawUI(HDC dc) {
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
 
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // build 4044");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // clean");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -474,45 +337,13 @@ void DrawUI(HDC dc) {
     DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
-    fillRect(dc, { 0, HH + 1, cr.right, HH + TBH }, P::BG);
 
     for (auto& c : g_ctrls) {
-        if (c.type == CTRL_TAB) {
-            bool active = (g_tab == c.id);
-            bool hover = PtInRect(&c.r, mp);
-            if (active)      fillRound(dc, c.r, P::ACCENT, 6);
-            else if (hover)  fillRound(dc, c.r, P::ROW_HOV, 6);
-
-            SelectObject(dc, g_fBold);
-            SetTextColor(dc, active ? RGB(20,20,24) : (hover ? P::TEXT : P::SUBTEXT));
-            SetBkMode(dc, TRANSPARENT);
-            DrawTextA(dc, c.label.c_str(), -1, &c.r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
-        else if (c.type == CTRL_TOGGLE) {
+        if (c.type == CTRL_TOGGLE) {
             bool hover = PtInRect(&c.r, mp);
             if (hover) fillRound(dc, c.r, P::ROW_HOV, 4);
             txt(dc, g_fB, P::TEXT, c.r.left + 6, c.r.top + 5, c.label.c_str());
             drawToggle(dc, c.r, *(bool*)c.data);
-        }
-        else if (c.type == CTRL_SLIDER) {
-            float* val = (float*)c.data;
-            txt(dc, g_fB, P::TEXT, c.r.left + 6, c.r.top, c.label.c_str());
-            char buf[32]; snprintf(buf, sizeof buf, "%d", (int)*val);
-            RECT valR = { c.r.right - 60, c.r.top, c.r.right, c.r.top + 16 };
-            SelectObject(dc, g_fBold);
-            SetTextColor(dc, P::ACCENT);
-            SetBkMode(dc, TRANSPARENT);
-            DrawTextA(dc, buf, -1, &valR, DT_RIGHT | DT_SINGLELINE);
-
-            RECT tr = { c.r.left + 6, c.r.top + 26, c.r.right - 6, c.r.top + 32 };
-            fillRound(dc, tr, P::TRACK, 6);
-            float a = (*val - 100.0f) / (5000.0f - 100.0f);
-            a = (a < 0) ? 0 : (a > 1 ? 1 : a);
-            RECT fr = { tr.left, tr.top, tr.left + (int)((tr.right - tr.left) * a), tr.bottom };
-            if (fr.right > fr.left) fillRound(dc, fr, P::FILL, 6);
-            int kx = tr.left + (int)((tr.right - tr.left) * a);
-            RECT kr = { kx - 6, tr.top - 3, kx + 6, tr.bottom + 3 };
-            fillRound(dc, kr, P::KNOB, 12);
         }
         else if (c.type == CTRL_COLOR) {
             int idx = c.id;
@@ -547,14 +378,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return MA_NOACTIVATE;
 
         case WM_MOUSEMOVE: {
-            if (g_dragSlider) {
-                float* v = (float*)g_dragSlider->data;
-                RECT tr = { g_dragSlider->r.left + 6, 0, g_dragSlider->r.right - 6, 0 };
-                int mx = GET_X_LPARAM(lp);
-                float a = (float)(mx - tr.left) / (float)(tr.right - tr.left);
-                a = (a < 0) ? 0 : (a > 1 ? 1 : a);
-                *v = 100.0f + a * (5000.0f - 100.0f);
-            }
             InvalidateRect(h, NULL, FALSE);
             TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
             TrackMouseEvent(&tme);
@@ -572,26 +395,14 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
             for (auto& c : g_ctrls) {
                 if (!PtInRect(&c.r, p)) continue;
-                if (c.type == CTRL_TAB) {
-                    g_tab = c.id;
-                    LayoutUI();
-                    InvalidateRect(h, NULL, FALSE);
-                } else if (c.type == CTRL_TOGGLE) {
+                if (c.type == CTRL_TOGGLE) {
                     *(bool*)c.data = !*(bool*)c.data;
                     InvalidateRect(h, NULL, FALSE);
-                } else if (c.type == CTRL_SLIDER) {
-                    g_dragSlider = &c;
-                    SetCapture(h);
                 } else if (c.type == CTRL_COLOR) {
                     g_esp.boneColor = g_swatches[c.id];
                     InvalidateRect(h, NULL, FALSE);
                 }
             }
-            return 0;
-        }
-
-        case WM_LBUTTONUP: {
-            if (g_dragSlider) { g_dragSlider = nullptr; ReleaseCapture(); }
             return 0;
         }
 
@@ -709,11 +520,7 @@ bool Init() {
 
     g_engine     = cifE("VEngineClient014", nullptr);
     if (!g_engine) g_engine = cifE("VEngineClient013", nullptr);
-
     g_entityList = cifC("VClientEntityList003", nullptr);
-    g_client     = cifC("VClient018", nullptr);
-    if (!g_client) g_client = cifC("VClient017", nullptr);
-
     g_surface    = cifC("VGUI_Surface031", nullptr);
     if (!g_surface) g_surface = cifC("VGUI_Surface030", nullptr);
 
