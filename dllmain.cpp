@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cwchar>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -73,13 +74,11 @@ int   Entity_Highest()                { typedef int(__thiscall* F)(void*); retur
 // ═══════════════════════════════════════════
 bool IsPlayerEntity(void* ent) {
     if (!ent || (uintptr_t)ent < 0x10000) return false;
-    // Vtable index 2 = GetClientClass()
     typedef void* (__thiscall* GetClientClassFn)(void*);
     void* cc = vf<GetClientClassFn>(ent, 2)(ent);
     if (!cc) return false;
     const char* name = *(const char**)((uintptr_t)cc + 0x8);
     if (!name) return false;
-    // В CSS игроки имеют NetworkName "C_CSPlayer"
     return (strstr(name, "Player") != nullptr || strstr(name, "player") != nullptr);
 }
 
@@ -144,29 +143,25 @@ void DrawESP() {
         void* e = Entity_Get(i);
         if (!e) continue;
         
-        // Защита 1: Это игрок? (Отсекает оружие, пропы, декали)
+        // Защита: проверяем что это игрок
         if (!IsPlayerEntity(e)) continue;
 
-        // Защита 2: Живой и валидный HP?
+        // Защита: HP валидный
         int hp = Ent_Health(e);
         if (hp <= 0 || hp > 1000) continue;
 
-        // Берем позицию ног (Origin) и голову (Bone 8)
         Vector feet = Ent_Origin(e);
         matrix3x4_t* b = Ent_Bones(e);
         if (!b) continue;
         
-        Vector head = BonePos(b, 8); // head
-        // Если кость головы уехала в 0,0,0 (баг), берем origin + 72 юнита вверх
-        if (head.Length() < 0.1f) {
-            head = feet + Vector(0, 0, 72);
-        }
+        Vector head = BonePos(b, 8);
+        if (head.Length() < 0.1f) head = feet + Vector(0, 0, 72);
 
         Vector sH, sF;
         if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
         
         float h = sF.y - sH.y;
-        if (h < 4 || h > 1800) continue; // Защита от гигантских/микроскопических боксов
+        if (h < 4 || h > 1800) continue;
         float w = h * 0.42f;
 
         int x0 = (int)(sH.x - w * 0.5f);
@@ -374,9 +369,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
-        case WM_MOUSEACTIVATE:
-            return MA_NOACTIVATE;
-
         case WM_MOUSEMOVE: {
             InvalidateRect(h, NULL, FALSE);
             TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 };
@@ -457,25 +449,27 @@ DWORD WINAPI MenuThread(LPVOID) {
     RegisterClassExA(&wc);
 
     g_wnd = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, // Убрали NOACTIVATE чтобы окно вылезло на Win7
         "CommandvsMenu", "commandvs",
         WS_POPUP,
         (GetSystemMetrics(SM_CXSCREEN) - WW) / 2,
         (GetSystemMetrics(SM_CYSCREEN) - WH) / 2,
         WW, WH, NULL, NULL, wc.hInstance, NULL);
+        
     if (!g_wnd) return 1;
 
     HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12);
     SetWindowRgn(g_wnd, rgn, TRUE);
 
     RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    ShowWindow(g_wnd, SW_SHOW);
+    ShowWindow(g_wnd, SW_SHOWNORMAL); // Выводим окно поверх
+    SetForegroundWindow(g_wnd);
 
     MSG msg;
     while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
         if (msg.message == WM_HOTKEY && msg.wParam == 1) {
             if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
-            else { ShowWindow(g_wnd, SW_SHOW); }
+            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
             continue;
         }
         TranslateMessage(&msg);
@@ -512,17 +506,21 @@ bool HookPaintTraverse() {
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
-    if (!eng || !cli) return false;
+    HMODULE vgui = GetModuleHandleA("vgui2.dll"); // ФИКС: Surface лежит тут!
+
+    if (!eng || !cli || !vgui) return false;
 
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifE || !cifC) return false;
+    auto cifV = (CreateInterfaceFn)GetProcAddress(vgui, "CreateInterface");
+
+    if (!cifE || !cifC || !cifV) return false;
 
     g_engine     = cifE("VEngineClient014", nullptr);
     if (!g_engine) g_engine = cifE("VEngineClient013", nullptr);
     g_entityList = cifC("VClientEntityList003", nullptr);
-    g_surface    = cifC("VGUI_Surface031", nullptr);
-    if (!g_surface) g_surface = cifC("VGUI_Surface030", nullptr);
+    g_surface    = cifV("VGUI_Surface031", nullptr); // ФИКС
+    if (!g_surface) g_surface = cifV("VGUI_Surface030", nullptr);
 
     return g_engine && g_entityList && g_surface;
 }
