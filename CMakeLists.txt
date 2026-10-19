@@ -12,5 +12,4 @@ endif()
 add_library(css_v34_menu SHARED dllmain.cpp)
 set_target_properties(css_v34_menu PROPERTIES PREFIX "" SUFFIX ".dll")
 
-# Линкуем системные библиотеки Windows для GUI
-target_link_libraries(css_v34_menu PRIVATE user32 gdi32 comctl32)
+target_link_libraries(css_v34_menu PRIVATE user32 gdi32 comctl32 msimg32)
