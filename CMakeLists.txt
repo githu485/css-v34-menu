@@ -12,4 +12,5 @@ endif()
 add_library(css_v34_menu SHARED dllmain.cpp)
 set_target_properties(css_v34_menu PROPERTIES PREFIX "" SUFFIX ".dll")
 
-target_link_libraries(css_v34_menu PRIVATE user32 gdi32 comctl32 msimg32)
+# Добавили d3d9 в конец для работы хука DirectX
+target_link_libraries(css_v34_menu PRIVATE user32 gdi32 comctl32 msimg32 d3d9)
