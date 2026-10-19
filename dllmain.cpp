@@ -437,48 +437,6 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 // ═══════════════════════════════════════════
-//   Menu thread
-// ═══════════════════════════════════════════
-DWORD WINAPI MenuThread(LPVOID) {
-    WNDCLASSEXA wc = { sizeof wc };
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = GetModuleHandleA(NULL);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-    wc.lpszClassName = "CommandvsMenu";
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassExA(&wc);
-
-    g_wnd = CreateWindowExA(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, // Убрали NOACTIVATE чтобы окно вылезло на Win7
-        "CommandvsMenu", "commandvs",
-        WS_POPUP,
-        (GetSystemMetrics(SM_CXSCREEN) - WW) / 2,
-        (GetSystemMetrics(SM_CYSCREEN) - WH) / 2,
-        WW, WH, NULL, NULL, wc.hInstance, NULL);
-        
-    if (!g_wnd) return 1;
-
-    HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12);
-    SetWindowRgn(g_wnd, rgn, TRUE);
-
-    RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    ShowWindow(g_wnd, SW_SHOWNORMAL); // Выводим окно поверх
-    SetForegroundWindow(g_wnd);
-
-    MSG msg;
-    while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
-            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
-            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
-            continue;
-        }
-        TranslateMessage(&msg);
-        DispatchMessageA(&msg);
-    }
-    return 0;
-}
-
-// ═══════════════════════════════════════════
 //   PaintTraverse hook
 // ═══════════════════════════════════════════
 typedef void(__thiscall* PaintTraverseFn)(void*, unsigned int, bool, bool);
@@ -501,12 +459,12 @@ bool HookPaintTraverse() {
 }
 
 // ═══════════════════════════════════════════
-//   Init + DllMain
+//   Init + MenuThread
 // ═══════════════════════════════════════════
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
-    HMODULE vgui = GetModuleHandleA("vgui2.dll"); // ФИКС: Surface лежит тут!
+    HMODULE vgui = GetModuleHandleA("vgui2.dll");
 
     if (!eng || !cli || !vgui) return false;
 
@@ -518,18 +476,71 @@ bool Init() {
 
     g_engine     = cifE("VEngineClient014", nullptr);
     if (!g_engine) g_engine = cifE("VEngineClient013", nullptr);
+    
     g_entityList = cifC("VClientEntityList003", nullptr);
-    g_surface    = cifV("VGUI_Surface031", nullptr); // ФИКС
+    
+    g_surface    = cifV("VGUI_Surface031", nullptr);
     if (!g_surface) g_surface = cifV("VGUI_Surface030", nullptr);
 
     return g_engine && g_entityList && g_surface;
 }
 
+DWORD WINAPI MenuThread(LPVOID) {
+    // Ждем полсекунды, чтобы игра точно прогрузила все нужные DLL (vgui2.dll и т.д.)
+    Sleep(500);
+
+    if (!Init()) {
+        MessageBoxA(NULL, "Init failed: Missing vgui2.dll or interfaces", "Debug", MB_OK);
+        return 1;
+    }
+
+    HookPaintTraverse();
+
+    WNDCLASSEXA wc = { sizeof wc };
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.lpszClassName = "CommandvsMenu";
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    RegisterClassExA(&wc);
+
+    g_wnd = CreateWindowExA(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, 
+        "CommandvsMenu", "commandvs",
+        WS_POPUP,
+        (GetSystemMetrics(SM_CXSCREEN) - WW) / 2,
+        (GetSystemMetrics(SM_CYSCREEN) - WH) / 2,
+        WW, WH, NULL, NULL, wc.hInstance, NULL);
+        
+    if (!g_wnd) return 1;
+
+    HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12);
+    SetWindowRgn(g_wnd, rgn, TRUE);
+
+    RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
+    ShowWindow(g_wnd, SW_SHOWNORMAL);
+    SetForegroundWindow(g_wnd);
+
+    MSG msg;
+    while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
+        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
+            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
+            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
+            continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    return 0;
+}
+
+// ═══════════════════════════════════════════
+//   DllMain
+// ═══════════════════════════════════════════
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        if (!Init()) return FALSE;
-        HookPaintTraverse();
+        // Мгновенно запускаем поток и возвращаем TRUE, чтобы инжектор не выдавал NULL
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
     else if (reason == DLL_PROCESS_DETACH) {
