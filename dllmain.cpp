@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp REWORKED
+// commandvs.cpp — css v34 (build 4044) dx9 esp DEBUG
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -94,7 +94,7 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 }
 
 // ═══════════════════════════════════════════
-//   DirectX 9 Render Engine (Reworked ESP)
+//   DirectX 9 Render
 // ═══════════════════════════════════════════
 IDirect3DDevice9* g_pDevice = nullptr;
 
@@ -113,31 +113,25 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
 }
 
 void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color) {
-    // Верхняя и нижняя линии
     DrawRect(x, y, w, thickness, color);
     DrawRect(x, y + h - thickness, w, thickness, color);
-    // Левая и правая линии
     DrawRect(x, y, thickness, h, color);
     DrawRect(x + w - thickness, y, thickness, h, color);
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика
+//   ESP Логика (DEBUG)
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
     bool box = true;
-    D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56); // Оранжевый
-    D3DCOLOR fillColor = D3DCOLOR_ARGB(40, 232, 168, 56); // Прозрачная заливка
+    D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56); 
+    D3DCOLOR fillColor = D3DCOLOR_ARGB(40, 232, 168, 56);
 } g_esp;
 
 void DrawESP() {
-    if (!g_esp.enabled || !Engine_InGame() || !g_pDevice) return;
+    if (!g_esp.enabled || !g_pDevice) return;
 
-    int lp = Engine_LocalPlayer();
-    if (lp <= 0) return;
-
-    // Сохраняем состояния DirectX, чтобы не сломать игру
     DWORD oldZ, oldAlpha, oldLighting;
     g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
     g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
@@ -149,6 +143,22 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
+    // 1. КРАСНЫЙ: Хук работает
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
+
+    if (!Engine_InGame()) return;
+    // 2. ЗЕЛЕНЫЙ: Мы на карте
+    DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
+
+    int lp = Engine_LocalPlayer();
+    if (lp <= 0) return;
+    // 3. СИНИЙ: Локальный игрок найден
+    DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
+
+    int validHealthCount = 0;
+    int validBoneCount = 0;
+    int validW2SCount = 0;
+
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
@@ -156,42 +166,51 @@ void DrawESP() {
         if (!e || !IsPlayerEntity(e)) continue;
 
         int hp = Ent_Health(e);
-        if (hp <= 0 || hp > 1000) continue;
+        if (hp > 0 && hp <= 100) {
+            validHealthCount++;
+            
+            matrix3x4_t* b = Ent_Bones(e);
+            if (b) {
+                Vector head = BonePos(b, 8);
+                Vector feet = Ent_Origin(e);
 
-        Vector feet = Ent_Origin(e);
-        matrix3x4_t* b = Ent_Bones(e);
-        if (!b) continue;
-        
-        Vector head = BonePos(b, 8);
-        if (head.Length() < 0.1f) head = feet + Vector(0, 0, 72);
+                // Проверка на нулевые координаты
+                if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
+                    validBoneCount++;
 
-        Vector sH, sF;
-        if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
-        
-        float h = sF.y - sH.y;
-        if (h < 4 || h > 1800) continue;
-        float w = h * 0.42f;
+                    Vector sH, sF;
+                    if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
+                        validW2SCount++;
+                        
+                        float h = sF.y - sH.y;
+                        if (h > 4 && h < 1800) {
+                            float w = h * 0.42f;
+                            float x0 = sH.x - w * 0.5f;
+                            float y0 = sH.y;
 
-        float x0 = sH.x - w * 0.5f;
-        float y0 = sH.y;
-
-        // 1. Заливка (полупрозрачная)
-        DrawRect(x0, y0, w, h, g_esp.fillColor);
-        
-        // 2. Рамка (толщина 1.5 пикселя)
-        if (g_esp.box) {
-            DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
+                            DrawRect(x0, y0, w, h, g_esp.fillColor);
+                            if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // Восстанавливаем состояния
+    // 4. БЕЛЫЙ: Найдены игроки по HP
+    if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
+    // 5. ЖЕЛТЫЙ: Кости прочитаны
+    if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
+    // 6. ФИОЛЕТОВЫЙ: W2S сработал
+    if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
+
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
 }
 
 // ═══════════════════════════════════════════
-//   Меню (Win32) — Без изменений
+//   Меню (Win32)
 // ═══════════════════════════════════════════
 namespace P {
     const COLORREF BG        = RGB(18, 19, 23);
@@ -283,7 +302,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // dx9 rework");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // debug");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -389,7 +408,7 @@ EndScene_t g_origEndScene = nullptr;
 
 HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
     g_pDevice = pDevice;
-    DrawESP(); // Вызов отрисовки
+    DrawESP();
     return g_origEndScene(pDevice);
 }
 
