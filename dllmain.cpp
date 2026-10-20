@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp HAL
+// commandvs.cpp — css v34 (build 4044) dx9 esp PRESENT
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -143,7 +143,7 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // 1. КРАСНЫЙ: Хук работает
+    // 1. КРАСНЫЙ: Хук Present работает
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
 
     if (!Engine_InGame()) return;
@@ -196,11 +196,8 @@ void DrawESP() {
         }
     }
 
-    // 4. БЕЛЫЙ: Найдены игроки по HP
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
-    // 5. ЖЕЛТЫЙ: Кости прочитаны
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
-    // 6. ФИОЛЕТОВЫЙ: W2S сработал
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
@@ -301,7 +298,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // HAL");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // present");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -400,19 +397,26 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (HAL)
+//   D3D9 Хук (Present)
 // ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
-EndScene_t g_origEndScene = nullptr;
+typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+Present_t g_origPresent = nullptr;
+bool g_hookFired = false;
 
-HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
+HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
     g_pDevice = pDevice;
+    
+    // Один раз показываем, что хук сработал (вдруг снова не видно)
+    if (!g_hookFired) {
+        g_hookFired = true;
+        // MessageBoxA(NULL, "Present Hook Fired!", "Debug", MB_OK);
+    }
+    
     DrawESP();
-    return g_origEndScene(pDevice);
+    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
 
 void HookD3D9() {
-    // 1. Создаем фейковое окно и устройство, чтобы найти vtable
     HWND hwnd = CreateWindowA("STATIC", "dummy", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
@@ -424,20 +428,22 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
     IDirect3DDevice9* pDevice = nullptr;
-    // 2. Используем D3DDEVTYPE_HAL, чтобы получить правильный vtable
-    pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
-    
+    // Пробуем Hardware, если не выйдет - Software
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    if (FAILED(hr)) {
+        hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    }
+
     if (pDevice) {
         void** vTable = *(void***)pDevice;
         
-        // 3. Берем оригинальный адрес EndScene (индекс 42)
-        g_origEndScene = (EndScene_t)vTable[42];
+        // Хукаем Present (индекс 17) вместо EndScene (42)
+        g_origPresent = (Present_t)vTable[17];
 
-        // 4. Ставим хук
         DWORD old;
-        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[42] = (void*)hkEndScene;
-        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[17] = (void*)hkPresent;
+        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
         
         pDevice->Release();
     }
