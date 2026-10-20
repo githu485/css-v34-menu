@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp FULL DIAGNOSTICS
+// commandvs.cpp — css v34 (build 4044) dx9 esp FIXED
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -143,15 +143,22 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
+    // 1. КРАСНЫЙ: Хук работает
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
+
     if (!Engine_InGame()) return;
+    // 2. ЗЕЛЕНЫЙ: Мы на карте
     DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
+    // 3. СИНИЙ: Локальный игрок найден
     DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
-    int validHealthCount = 0, validBoneCount = 0, validW2SCount = 0;
+    int validHealthCount = 0;
+    int validBoneCount = 0;
+    int validW2SCount = 0;
+
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
@@ -161,20 +168,25 @@ void DrawESP() {
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
             validHealthCount++;
+            
             matrix3x4_t* b = Ent_Bones(e);
             if (b) {
                 Vector head = BonePos(b, 8);
                 Vector feet = Ent_Origin(e);
+
                 if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
                     validBoneCount++;
+
                     Vector sH, sF;
                     if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
                         validW2SCount++;
+                        
                         float h = sF.y - sH.y;
                         if (h > 4 && h < 1800) {
                             float w = h * 0.42f;
                             float x0 = sH.x - w * 0.5f;
                             float y0 = sH.y;
+
                             DrawRect(x0, y0, w, h, g_esp.fillColor);
                             if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
                         }
@@ -183,6 +195,7 @@ void DrawESP() {
             }
         }
     }
+
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
@@ -285,7 +298,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // diag");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // dx9 fixed");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -384,7 +397,7 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (FULL DIAGNOSTICS)
+//   D3D9 Хук (ИСПРАВЛЕННЫЙ)
 // ═══════════════════════════════════════════
 typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
 Present_t g_origPresent = nullptr;
@@ -408,25 +421,6 @@ HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, 
     return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
 
-void DiagnosticReport() {
-    char buffer[1024];
-    HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
-    HMODULE d3d8 = GetModuleHandleA("d3d8.dll");
-    
-    sprintf_s(buffer, sizeof(buffer), 
-        "--- DIAGNOSTICS ---\n"
-        "d3d9.dll loaded: %s\n"
-        "d3d8.dll loaded: %s\n"
-        "engine.dll loaded: %s\n"
-        "client.dll loaded: %s\n",
-        d3d9 ? "YES" : "NO",
-        d3d8 ? "YES" : "NO",
-        GetModuleHandleA("engine.dll") ? "YES" : "NO",
-        GetModuleHandleA("client.dll") ? "YES" : "NO"
-    );
-    MessageBoxA(NULL, buffer, "Diagnostics", MB_OK | MB_ICONINFORMATION);
-}
-
 void HookD3D9() {
     HMODULE hD3D9 = GetModuleHandleA("d3d9.dll");
     if (!hD3D9) {
@@ -434,7 +428,9 @@ void HookD3D9() {
         return;
     }
 
-    HWND hwnd = CreateWindowA("STATIC", "dummy", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+    // Создаем фейковое окно НОРМАЛЬНОГО размера (100x100)
+    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
+    
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) {
         MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
@@ -446,13 +442,15 @@ void HookD3D9() {
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     d3dpp.hDeviceWindow = hwnd;
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+    d3dpp.BackBufferWidth = 100;
+    d3dpp.BackBufferHeight = 100;
 
     IDirect3DDevice9* pDevice = nullptr;
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
     if (FAILED(hr)) {
         char err[256];
-        sprintf_s(err, sizeof(err), "CreateDevice failed! HRESULT: 0x%08X", hr);
+        sprintf(err, "CreateDevice failed! HRESULT: 0x%08X", hr);
         MessageBoxA(NULL, err, "DEBUG ERROR", MB_OK | MB_ICONERROR);
         pD3D->Release();
         DestroyWindow(hwnd);
@@ -461,6 +459,7 @@ void HookD3D9() {
 
     if (pDevice) {
         void** vTable = *(void***)pDevice;
+        
         g_origPresent = (Present_t)vTable[17];
 
         DWORD old;
@@ -469,7 +468,9 @@ void HookD3D9() {
         VirtualProtect(&vTable[17], sizeof(void*), old, &old);
         
         pDevice->Release();
-        MessageBoxA(NULL, "Hook installed successfully!", "DEBUG OK", MB_OK | MB_ICONINFORMATION);
+        MessageBoxA(NULL, "Hook installed successfully! Waiting for Present...", "DEBUG OK", MB_OK | MB_ICONINFORMATION);
+    } else {
+        MessageBoxA(NULL, "pDevice is NULL without error!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
     }
     pD3D->Release();
     DestroyWindow(hwnd);
@@ -497,10 +498,7 @@ bool Init() {
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        Sleep(1500); 
-        
-        DiagnosticReport();
-        
+        Sleep(1000); 
         if (Init()) HookD3D9(); 
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
