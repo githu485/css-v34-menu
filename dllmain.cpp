@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp CHECKPOINTS
+// commandvs.cpp — css v34 (build 4044) dx9 esp BRUTE FORCE
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -285,7 +285,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // check");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // brute");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -425,7 +425,6 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
     IDirect3DDevice9* pDevice = nullptr;
-    // Используем NULLREF для стабильности на старых драйверах
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
     if (FAILED(hr) || !pDevice) {
@@ -439,7 +438,6 @@ void HookD3D9() {
 
     void** vTable = *(void***)pDevice;
     
-    // Хукаем EndScene (индекс 42)
     g_origEndScene = (EndScene_t)vTable[42];
 
     DWORD old;
@@ -461,40 +459,62 @@ bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
     if (!eng || !cli) {
-        MessageBoxA(NULL, "engine.dll or client.dll not found!", "Init Error", MB_OK);
+        MessageBoxA(NULL, "engine.dll or client.dll NOT LOADED", "Init Error", MB_OK);
         return false;
     }
 
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
+    if (!cifE) cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterfaceInternal");
+
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifE || !cifC) {
-        MessageBoxA(NULL, "CreateInterface not found!", "Init Error", MB_OK);
-        return false;
+    if (!cifC) cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterfaceInternal");
+
+    if (!cifE) { MessageBoxA(NULL, "engine CreateInterface EXPORT NOT FOUND", "Init Error", MB_OK); return false; }
+    if (!cifC) { MessageBoxA(NULL, "client CreateInterface EXPORT NOT FOUND", "Init Error", MB_OK); return false; }
+
+    char buf[64];
+    char foundEng[64] = "NOT FOUND";
+    char foundEnt[64] = "NOT FOUND";
+
+    // Брутфорс VEngineClient
+    for (int i = 0; i <= 99; i++) {
+        sprintf(buf, "VEngineClient%03d", i);
+        g_engine = cifE(buf, nullptr);
+        if (g_engine) { sprintf(foundEng, "%s", buf); break; }
+        
+        sprintf(buf, "EngineClient%03d", i);
+        g_engine = cifE(buf, nullptr);
+        if (g_engine) { sprintf(foundEng, "%s", buf); break; }
     }
 
-    g_engine     = cifE("VEngineClient014", nullptr);
-    if (!g_engine) g_engine = cifE("VEngineClient013", nullptr);
+    // Брутфорс VClientEntityList
+    for (int i = 0; i <= 99; i++) {
+        sprintf(buf, "VClientEntityList%03d", i);
+        g_entityList = cifC(buf, nullptr);
+        if (g_entityList) { sprintf(foundEnt, "%s", buf); break; }
+
+        sprintf(buf, "ClientEntityList%03d", i);
+        g_entityList = cifC(buf, nullptr);
+        if (g_entityList) { sprintf(foundEnt, "%s", buf); break; }
+    }
+
+    char msg[256];
+    sprintf(msg, "Engine: %s\nEntityList: %s", foundEng, foundEnt);
+    MessageBoxA(NULL, msg, "Init Brute-Force Result", MB_OK | MB_ICONINFORMATION);
     
-    g_entityList = cifC("VClientEntityList003", nullptr);
-
-    if (!g_engine) {
-        MessageBoxA(NULL, "VEngineClient interface NOT found!", "Init Error", MB_OK);
-        return false;
-    }
-    if (!g_entityList) {
-        MessageBoxA(NULL, "VClientEntityList interface NOT found!", "Init Error", MB_OK);
-        return false;
+    if (!g_engine || !g_entityList) {
+        return false; 
     }
 
-    return true;
+    return true; 
 }
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        MessageBoxA(NULL, "Step 1: DLL Attached! Waiting 1 sec...", "DEBUG STEP", MB_OK);
+        MessageBoxA(NULL, "Step 1: DLL Attached! Waiting 3 sec...", "DEBUG STEP", MB_OK);
 
-        Sleep(1000); 
+        Sleep(3000); 
         
         if (Init()) {
             MessageBoxA(NULL, "Step 1.5: Init SUCCESS!", "DEBUG STEP", MB_OK);
