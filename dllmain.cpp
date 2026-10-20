@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp DEBUG
+// commandvs.cpp — css v34 (build 4044) dx9 esp HAL
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -174,7 +174,6 @@ void DrawESP() {
                 Vector head = BonePos(b, 8);
                 Vector feet = Ent_Origin(e);
 
-                // Проверка на нулевые координаты
                 if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
                     validBoneCount++;
 
@@ -302,7 +301,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // debug");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // HAL");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -401,7 +400,7 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук
+//   D3D9 Хук (HAL)
 // ═══════════════════════════════════════════
 typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
 EndScene_t g_origEndScene = nullptr;
@@ -413,23 +412,33 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
 }
 
 void HookD3D9() {
+    // 1. Создаем фейковое окно и устройство, чтобы найти vtable
     HWND hwnd = CreateWindowA("STATIC", "dummy", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
 
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
-    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.Windowed = TRUE; 
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hwnd;
+    d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+
     IDirect3DDevice9* pDevice = nullptr;
-    pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    // 2. Используем D3DDEVTYPE_HAL, чтобы получить правильный vtable
+    pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
     if (pDevice) {
         void** vTable = *(void***)pDevice;
+        
+        // 3. Берем оригинальный адрес EndScene (индекс 42)
         g_origEndScene = (EndScene_t)vTable[42];
 
+        // 4. Ставим хук
         DWORD old;
         VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
         vTable[42] = (void*)hkEndScene;
         VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+        
         pDevice->Release();
     }
     pD3D->Release();
