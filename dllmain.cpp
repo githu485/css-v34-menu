@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp FIXED THREADS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -143,16 +143,16 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // ДЕБАГ: Красный квадрат (Хук D3D9)
+    // 1. КРАСНЫЙ: Хук D3D9 работает
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
 
     if (!Engine_InGame()) return;
-    // ДЕБАГ: Зеленый (На карте)
+    // 2. ЗЕЛЕНЫЙ: Мы на карте
     DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
-    // ДЕБАГ: Синий (Есть LocalPlayer)
+    // 3. СИНИЙ: Локальный игрок найден
     DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
     int validHealthCount = 0;
@@ -196,11 +196,11 @@ void DrawESP() {
         }
     }
 
-    // ДЕБАГ: Белый (Найдены игроки с HP 1-100)
+    // 4. БЕЛЫЙ: Найдены игроки по HP
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
-    // ДЕБАГ: Желтый (Найдены кости)
+    // 5. ЖЕЛТЫЙ: Прочитана матрица костей
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
-    // ДЕБАГ: Фиолетовый (WorldToScreen сработал)
+    // 6. ФИОЛЕТОВЫЙ: Сработал WorldToScreen
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
@@ -301,7 +301,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // 011 final");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // fixed threads");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -406,10 +406,8 @@ typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT
 Present_t g_origPresent = nullptr;
 
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
-    // Сначала вызываем оригинальный Present, чтобы игра отрисовала свой кадр
     HRESULT result = g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
     
-    // Теперь рисуем поверх
     g_pDevice = pDevice;
     DrawESP();
     
@@ -417,7 +415,6 @@ HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, 
 }
 
 void HookD3D9() {
-    // Создаем нормальное окно 100x100
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
@@ -429,14 +426,10 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
     IDirect3DDevice9* pDevice = nullptr;
-    
-    // Используем NULLREF, чтобы не захватывать эксклюзивный доступ к видеокарте
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
 
     if (pDevice) {
         void** vTable = *(void***)pDevice;
-        
-        // Хукаем Present (индекс 17)
         g_origPresent = (Present_t)vTable[17];
 
         DWORD old;
@@ -452,7 +445,7 @@ void HookD3D9() {
 }
 
 // ═══════════════════════════════════════════
-//   Init + DllMain
+//   Init + DllMain (ФИКС ЗАВИСАНИЯ)
 // ═══════════════════════════════════════════
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
@@ -463,23 +456,27 @@ bool Init() {
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
     if (!cifE || !cifC) return false;
 
-    // ЖЕСТКО ПРОПИСЫВАЕМ ТВОИ ИНТЕРФЕЙСЫ
     g_engine     = cifE("VEngineClient011", nullptr);
     g_entityList = cifC("VClientEntityList003", nullptr);
 
     return g_engine && g_entityList;
 }
 
+// ВЫНОСИМ SLEEP И ХУК В ОТДЕЛЬНЫЙ ПОТОК
+DWORD WINAPI InitThread(LPVOID) {
+    Sleep(2000); // Теперь это безопасно, мы не блокируем DllMain
+    if (Init()) {
+        HookD3D9(); 
+    }
+    return 0;
+}
+
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
         
-        Sleep(2000); // Даем игре прогрузиться
-        
-        if (Init()) {
-            HookD3D9(); 
-        }
-        
+        // Мгновенно возвращаем управление инжектору
+        CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
     else if (reason == DLL_PROCESS_DETACH) {
