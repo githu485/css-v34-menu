@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp FIXED
+// commandvs.cpp — css v34 (build 4044) dx9 esp CHECKPOINTS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -143,22 +143,15 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // 1. КРАСНЫЙ: Хук работает
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
-
     if (!Engine_InGame()) return;
-    // 2. ЗЕЛЕНЫЙ: Мы на карте
     DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
-    // 3. СИНИЙ: Локальный игрок найден
     DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
-    int validHealthCount = 0;
-    int validBoneCount = 0;
-    int validW2SCount = 0;
-
+    int validHealthCount = 0, validBoneCount = 0, validW2SCount = 0;
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
@@ -168,25 +161,20 @@ void DrawESP() {
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
             validHealthCount++;
-            
             matrix3x4_t* b = Ent_Bones(e);
             if (b) {
                 Vector head = BonePos(b, 8);
                 Vector feet = Ent_Origin(e);
-
                 if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
                     validBoneCount++;
-
                     Vector sH, sF;
                     if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
                         validW2SCount++;
-                        
                         float h = sF.y - sH.y;
                         if (h > 4 && h < 1800) {
                             float w = h * 0.42f;
                             float x0 = sH.x - w * 0.5f;
                             float y0 = sH.y;
-
                             DrawRect(x0, y0, w, h, g_esp.fillColor);
                             if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
                         }
@@ -195,7 +183,6 @@ void DrawESP() {
             }
         }
     }
-
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
@@ -298,7 +285,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // dx9 fixed");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // check");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -397,18 +384,18 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (ИСПРАВЛЕННЫЙ)
+//   D3D9 Хук (EndScene)
 // ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-Present_t g_origPresent = nullptr;
+typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
+EndScene_t g_origEndScene = nullptr;
 bool g_hookFired = false;
 
-HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
+HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
     g_pDevice = pDevice;
     
     if (!g_hookFired) {
         g_hookFired = true;
-        MessageBoxA(NULL, "Present Hook Works! (First frame)", "DEBUG", MB_OK);
+        MessageBoxA(NULL, "EndScene Hook Works! (First frame)", "DEBUG", MB_OK);
     }
     
     if (g_pDevice) {
@@ -418,22 +405,16 @@ HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, 
     }
 
     DrawESP();
-    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
+    return g_origEndScene(pDevice);
 }
 
 void HookD3D9() {
-    HMODULE hD3D9 = GetModuleHandleA("d3d9.dll");
-    if (!hD3D9) {
-        MessageBoxA(NULL, "d3d9.dll not loaded!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
-        return;
-    }
+    MessageBoxA(NULL, "Step 2: HookD3D9 Started...", "DEBUG STEP", MB_OK);
 
-    // Создаем фейковое окно НОРМАЛЬНОГО размера (100x100)
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) {
-        MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
+        MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK);
         return;
     }
 
@@ -442,38 +423,35 @@ void HookD3D9() {
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     d3dpp.hDeviceWindow = hwnd;
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-    d3dpp.BackBufferWidth = 100;
-    d3dpp.BackBufferHeight = 100;
 
     IDirect3DDevice9* pDevice = nullptr;
-    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    // Используем NULLREF для стабильности на старых драйверах
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
-    if (FAILED(hr)) {
+    if (FAILED(hr) || !pDevice) {
         char err[256];
         sprintf(err, "CreateDevice failed! HRESULT: 0x%08X", hr);
-        MessageBoxA(NULL, err, "DEBUG ERROR", MB_OK | MB_ICONERROR);
+        MessageBoxA(NULL, err, "DEBUG ERROR", MB_OK);
         pD3D->Release();
         DestroyWindow(hwnd);
         return;
     }
 
-    if (pDevice) {
-        void** vTable = *(void***)pDevice;
-        
-        g_origPresent = (Present_t)vTable[17];
+    void** vTable = *(void***)pDevice;
+    
+    // Хукаем EndScene (индекс 42)
+    g_origEndScene = (EndScene_t)vTable[42];
 
-        DWORD old;
-        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[17] = (void*)hkPresent;
-        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-        
-        pDevice->Release();
-        MessageBoxA(NULL, "Hook installed successfully! Waiting for Present...", "DEBUG OK", MB_OK | MB_ICONINFORMATION);
-    } else {
-        MessageBoxA(NULL, "pDevice is NULL without error!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
-    }
+    DWORD old;
+    VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    vTable[42] = (void*)hkEndScene;
+    VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+    
+    pDevice->Release();
     pD3D->Release();
     DestroyWindow(hwnd);
+
+    MessageBoxA(NULL, "Hook installed successfully on EndScene!", "DEBUG OK", MB_OK);
 }
 
 // ═══════════════════════════════════════════
@@ -482,24 +460,49 @@ void HookD3D9() {
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
-    if (!eng || !cli) return false;
+    if (!eng || !cli) {
+        MessageBoxA(NULL, "engine.dll or client.dll not found!", "Init Error", MB_OK);
+        return false;
+    }
 
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifE || !cifC) return false;
+    if (!cifE || !cifC) {
+        MessageBoxA(NULL, "CreateInterface not found!", "Init Error", MB_OK);
+        return false;
+    }
 
     g_engine     = cifE("VEngineClient014", nullptr);
     if (!g_engine) g_engine = cifE("VEngineClient013", nullptr);
+    
     g_entityList = cifC("VClientEntityList003", nullptr);
 
-    return g_engine && g_entityList;
+    if (!g_engine) {
+        MessageBoxA(NULL, "VEngineClient interface NOT found!", "Init Error", MB_OK);
+        return false;
+    }
+    if (!g_entityList) {
+        MessageBoxA(NULL, "VClientEntityList interface NOT found!", "Init Error", MB_OK);
+        return false;
+    }
+
+    return true;
 }
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
+        MessageBoxA(NULL, "Step 1: DLL Attached! Waiting 1 sec...", "DEBUG STEP", MB_OK);
+
         Sleep(1000); 
-        if (Init()) HookD3D9(); 
+        
+        if (Init()) {
+            MessageBoxA(NULL, "Step 1.5: Init SUCCESS!", "DEBUG STEP", MB_OK);
+            HookD3D9(); 
+        } else {
+            MessageBoxA(NULL, "Step 1.5: Init FAILED!", "DEBUG STEP", MB_OK);
+        }
+        
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
     else if (reason == DLL_PROCESS_DETACH) {
