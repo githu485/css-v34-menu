@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp TEST
+// commandvs.cpp — css v34 (build 4044) dx9 esp FULL DIAGNOSTICS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -120,7 +120,7 @@ void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика (DEBUG)
+//   ESP Логика
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
@@ -143,22 +143,15 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // 1. КРАСНЫЙ: Хук работает
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
-
     if (!Engine_InGame()) return;
-    // 2. ЗЕЛЕНЫЙ: Мы на карте
     DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
-    // 3. СИНИЙ: Локальный игрок найден
     DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
-    int validHealthCount = 0;
-    int validBoneCount = 0;
-    int validW2SCount = 0;
-
+    int validHealthCount = 0, validBoneCount = 0, validW2SCount = 0;
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
@@ -168,25 +161,20 @@ void DrawESP() {
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
             validHealthCount++;
-            
             matrix3x4_t* b = Ent_Bones(e);
             if (b) {
                 Vector head = BonePos(b, 8);
                 Vector feet = Ent_Origin(e);
-
                 if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
                     validBoneCount++;
-
                     Vector sH, sF;
                     if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
                         validW2SCount++;
-                        
                         float h = sF.y - sH.y;
                         if (h > 4 && h < 1800) {
                             float w = h * 0.42f;
                             float x0 = sH.x - w * 0.5f;
                             float y0 = sH.y;
-
                             DrawRect(x0, y0, w, h, g_esp.fillColor);
                             if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
                         }
@@ -195,7 +183,6 @@ void DrawESP() {
             }
         }
     }
-
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
@@ -298,7 +285,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // TEST");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // diag");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -397,7 +384,7 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (Present TEST)
+//   D3D9 Хук (FULL DIAGNOSTICS)
 // ═══════════════════════════════════════════
 typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
 Present_t g_origPresent = nullptr;
@@ -406,29 +393,53 @@ bool g_hookFired = false;
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
     g_pDevice = pDevice;
     
-    // 1. ТЕСТ: Показываем MessageBox при первом кадре
     if (!g_hookFired) {
         g_hookFired = true;
-        MessageBoxA(NULL, "Present Hook Works! Click OK to continue.", "DEBUG", MB_OK);
+        MessageBoxA(NULL, "Present Hook Works! (First frame)", "DEBUG", MB_OK);
     }
     
-    // 2. ТЕСТ: Рисуем огромный красный квадрат прямо по центру экрана
     if (g_pDevice) {
         int screenW = GetSystemMetrics(SM_CXSCREEN);
         int screenH = GetSystemMetrics(SM_CYSCREEN);
         DrawRect(screenW / 2.0f - 100.0f, screenH / 2.0f - 100.0f, 200.0f, 200.0f, D3DCOLOR_ARGB(255, 255, 0, 0));
     }
 
-    // 3. Обычный дебаг ESP (квадратики в левом верхнем углу)
     DrawESP();
-    
     return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
 
+void DiagnosticReport() {
+    char buffer[1024];
+    HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
+    HMODULE d3d8 = GetModuleHandleA("d3d8.dll");
+    
+    sprintf_s(buffer, sizeof(buffer), 
+        "--- DIAGNOSTICS ---\n"
+        "d3d9.dll loaded: %s\n"
+        "d3d8.dll loaded: %s\n"
+        "engine.dll loaded: %s\n"
+        "client.dll loaded: %s\n",
+        d3d9 ? "YES" : "NO",
+        d3d8 ? "YES" : "NO",
+        GetModuleHandleA("engine.dll") ? "YES" : "NO",
+        GetModuleHandleA("client.dll") ? "YES" : "NO"
+    );
+    MessageBoxA(NULL, buffer, "Diagnostics", MB_OK | MB_ICONINFORMATION);
+}
+
 void HookD3D9() {
+    HMODULE hD3D9 = GetModuleHandleA("d3d9.dll");
+    if (!hD3D9) {
+        MessageBoxA(NULL, "d3d9.dll not loaded!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
+        return;
+    }
+
     HWND hwnd = CreateWindowA("STATIC", "dummy", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!pD3D) return;
+    if (!pD3D) {
+        MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK | MB_ICONERROR);
+        return;
+    }
 
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
     d3dpp.Windowed = TRUE; 
@@ -437,15 +448,19 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
     IDirect3DDevice9* pDevice = nullptr;
-    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    
     if (FAILED(hr)) {
-        hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+        char err[256];
+        sprintf_s(err, sizeof(err), "CreateDevice failed! HRESULT: 0x%08X", hr);
+        MessageBoxA(NULL, err, "DEBUG ERROR", MB_OK | MB_ICONERROR);
+        pD3D->Release();
+        DestroyWindow(hwnd);
+        return;
     }
 
     if (pDevice) {
         void** vTable = *(void***)pDevice;
-        
-        // Хукаем Present (индекс 17)
         g_origPresent = (Present_t)vTable[17];
 
         DWORD old;
@@ -454,6 +469,7 @@ void HookD3D9() {
         VirtualProtect(&vTable[17], sizeof(void*), old, &old);
         
         pDevice->Release();
+        MessageBoxA(NULL, "Hook installed successfully!", "DEBUG OK", MB_OK | MB_ICONINFORMATION);
     }
     pD3D->Release();
     DestroyWindow(hwnd);
@@ -481,7 +497,10 @@ bool Init() {
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        Sleep(1000); 
+        Sleep(1500); 
+        
+        DiagnosticReport();
+        
         if (Init()) HookD3D9(); 
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
