@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (build 4044) dx9 esp BRUTE FORCE
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -120,7 +120,7 @@ void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика
+//   ESP Логика (С ДЕБАГ-КВАДРАТАМИ)
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
@@ -143,15 +143,22 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
+    // ДЕБАГ: Красный квадрат (Хук D3D9)
     DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
+
     if (!Engine_InGame()) return;
+    // ДЕБАГ: Зеленый (На карте)
     DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
 
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
+    // ДЕБАГ: Синий (Есть LocalPlayer)
     DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
-    int validHealthCount = 0, validBoneCount = 0, validW2SCount = 0;
+    int validHealthCount = 0;
+    int validBoneCount = 0;
+    int validW2SCount = 0;
+
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
@@ -161,20 +168,25 @@ void DrawESP() {
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
             validHealthCount++;
+            
             matrix3x4_t* b = Ent_Bones(e);
             if (b) {
                 Vector head = BonePos(b, 8);
                 Vector feet = Ent_Origin(e);
+
                 if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
                     validBoneCount++;
+
                     Vector sH, sF;
                     if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
                         validW2SCount++;
+                        
                         float h = sF.y - sH.y;
                         if (h > 4 && h < 1800) {
                             float w = h * 0.42f;
                             float x0 = sH.x - w * 0.5f;
                             float y0 = sH.y;
+
                             DrawRect(x0, y0, w, h, g_esp.fillColor);
                             if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
                         }
@@ -183,8 +195,12 @@ void DrawESP() {
             }
         }
     }
+
+    // ДЕБАГ: Белый (Найдены игроки с HP 1-100)
     if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
+    // ДЕБАГ: Желтый (Найдены кости)
     if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
+    // ДЕБАГ: Фиолетовый (WorldToScreen сработал)
     if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
@@ -285,7 +301,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // brute");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // 011 final");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -384,39 +400,27 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (EndScene)
+//   D3D9 Хук (Present)
 // ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
-EndScene_t g_origEndScene = nullptr;
-bool g_hookFired = false;
+typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+Present_t g_origPresent = nullptr;
 
-HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
+HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
+    // Сначала вызываем оригинальный Present, чтобы игра отрисовала свой кадр
+    HRESULT result = g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
+    
+    // Теперь рисуем поверх
     g_pDevice = pDevice;
-    
-    if (!g_hookFired) {
-        g_hookFired = true;
-        MessageBoxA(NULL, "EndScene Hook Works! (First frame)", "DEBUG", MB_OK);
-    }
-    
-    if (g_pDevice) {
-        int screenW = GetSystemMetrics(SM_CXSCREEN);
-        int screenH = GetSystemMetrics(SM_CYSCREEN);
-        DrawRect(screenW / 2.0f - 100.0f, screenH / 2.0f - 100.0f, 200.0f, 200.0f, D3DCOLOR_ARGB(255, 255, 0, 0));
-    }
-
     DrawESP();
-    return g_origEndScene(pDevice);
+    
+    return result;
 }
 
 void HookD3D9() {
-    MessageBoxA(NULL, "Step 2: HookD3D9 Started...", "DEBUG STEP", MB_OK);
-
+    // Создаем нормальное окно 100x100
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!pD3D) {
-        MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK);
-        return;
-    }
+    if (!pD3D) return;
 
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
     d3dpp.Windowed = TRUE; 
@@ -425,31 +429,26 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
 
     IDirect3DDevice9* pDevice = nullptr;
+    
+    // Используем NULLREF, чтобы не захватывать эксклюзивный доступ к видеокарте
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
-    
-    if (FAILED(hr) || !pDevice) {
-        char err[256];
-        sprintf(err, "CreateDevice failed! HRESULT: 0x%08X", hr);
-        MessageBoxA(NULL, err, "DEBUG ERROR", MB_OK);
-        pD3D->Release();
-        DestroyWindow(hwnd);
-        return;
+
+    if (pDevice) {
+        void** vTable = *(void***)pDevice;
+        
+        // Хукаем Present (индекс 17)
+        g_origPresent = (Present_t)vTable[17];
+
+        DWORD old;
+        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[17] = (void*)hkPresent;
+        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
+        
+        pDevice->Release();
     }
-
-    void** vTable = *(void***)pDevice;
     
-    g_origEndScene = (EndScene_t)vTable[42];
-
-    DWORD old;
-    VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-    vTable[42] = (void*)hkEndScene;
-    VirtualProtect(&vTable[42], sizeof(void*), old, &old);
-    
-    pDevice->Release();
     pD3D->Release();
     DestroyWindow(hwnd);
-
-    MessageBoxA(NULL, "Hook installed successfully on EndScene!", "DEBUG OK", MB_OK);
 }
 
 // ═══════════════════════════════════════════
@@ -458,69 +457,27 @@ void HookD3D9() {
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
-    if (!eng || !cli) {
-        MessageBoxA(NULL, "engine.dll or client.dll NOT LOADED", "Init Error", MB_OK);
-        return false;
-    }
+    if (!eng || !cli) return false;
 
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
-    if (!cifE) cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterfaceInternal");
-
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifC) cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterfaceInternal");
+    if (!cifE || !cifC) return false;
 
-    if (!cifE) { MessageBoxA(NULL, "engine CreateInterface EXPORT NOT FOUND", "Init Error", MB_OK); return false; }
-    if (!cifC) { MessageBoxA(NULL, "client CreateInterface EXPORT NOT FOUND", "Init Error", MB_OK); return false; }
+    // ЖЕСТКО ПРОПИСЫВАЕМ ТВОИ ИНТЕРФЕЙСЫ
+    g_engine     = cifE("VEngineClient011", nullptr);
+    g_entityList = cifC("VClientEntityList003", nullptr);
 
-    char buf[64];
-    char foundEng[64] = "NOT FOUND";
-    char foundEnt[64] = "NOT FOUND";
-
-    // Брутфорс VEngineClient
-    for (int i = 0; i <= 99; i++) {
-        sprintf(buf, "VEngineClient%03d", i);
-        g_engine = cifE(buf, nullptr);
-        if (g_engine) { sprintf(foundEng, "%s", buf); break; }
-        
-        sprintf(buf, "EngineClient%03d", i);
-        g_engine = cifE(buf, nullptr);
-        if (g_engine) { sprintf(foundEng, "%s", buf); break; }
-    }
-
-    // Брутфорс VClientEntityList
-    for (int i = 0; i <= 99; i++) {
-        sprintf(buf, "VClientEntityList%03d", i);
-        g_entityList = cifC(buf, nullptr);
-        if (g_entityList) { sprintf(foundEnt, "%s", buf); break; }
-
-        sprintf(buf, "ClientEntityList%03d", i);
-        g_entityList = cifC(buf, nullptr);
-        if (g_entityList) { sprintf(foundEnt, "%s", buf); break; }
-    }
-
-    char msg[256];
-    sprintf(msg, "Engine: %s\nEntityList: %s", foundEng, foundEnt);
-    MessageBoxA(NULL, msg, "Init Brute-Force Result", MB_OK | MB_ICONINFORMATION);
-    
-    if (!g_engine || !g_entityList) {
-        return false; 
-    }
-
-    return true; 
+    return g_engine && g_entityList;
 }
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        MessageBoxA(NULL, "Step 1: DLL Attached! Waiting 3 sec...", "DEBUG STEP", MB_OK);
-
-        Sleep(3000); 
+        
+        Sleep(2000); // Даем игре прогрузиться
         
         if (Init()) {
-            MessageBoxA(NULL, "Step 1.5: Init SUCCESS!", "DEBUG STEP", MB_OK);
             HookD3D9(); 
-        } else {
-            MessageBoxA(NULL, "Step 1.5: Init FAILED!", "DEBUG STEP", MB_OK);
         }
         
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
