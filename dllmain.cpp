@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) 100% SAFE SCANNER
+// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -8,7 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <sstream>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -45,15 +44,15 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// ИЗВЕСТНЫЕ ОФФСЕТЫ
+// НАЙДЕННЫЕ ОФФСЕТЫ
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
+    constexpr uintptr_t Origin    = 0x1b18; // Найдено сканером!
     constexpr uintptr_t BoneMat   = 0x4E4;
+    constexpr uintptr_t W2SMatrix = 0x2db4; // Смещение от g_engine
 }
 
-// ═══════════════════════════════════════════
-//   Безопасное чтение памяти
-// ═══════════════════════════════════════════
+// Безопасное чтение памяти
 template<typename T>
 bool SafeRead(uintptr_t addr, T& out) {
     if (addr < 0x10000) return false;
@@ -86,6 +85,23 @@ bool IsPlayerEntitySafe(void* ent) {
 }
 
 int  Ent_Health(void* e) { int hp = 0; SafeRead((uintptr_t)e + Off::Health, hp); return hp; }
+Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
+
+bool WorldToScreen(const Vector& w, Vector& out) {
+    // Читаем матрицу напрямую из памяти движка!
+    VMatrix* m = (VMatrix*)((uintptr_t)g_engine + Off::W2SMatrix);
+    
+    float cw = (*m)[3][0]*w.x + (*m)[3][1]*w.y + (*m)[3][2]*w.z + (*m)[3][3];
+    if (cw < 0.001f) return false;
+    float iw = 1.0f / cw;
+    float sx = ((*m)[0][0]*w.x + (*m)[0][1]*w.y + (*m)[0][2]*w.z + (*m)[0][3]) * iw;
+    float sy = ((*m)[1][0]*w.x + (*m)[1][1]*w.y + (*m)[1][2]*w.z + (*m)[1][3]) * iw;
+    
+    int sw, sh; Engine_ScreenSize(sw, sh);
+    out.x = (sw * 0.5f) + (sx * sw) * 0.5f;
+    out.y = (sh * 0.5f) - (sy * sh) * 0.5f;
+    return true;
+}
 
 // ═══════════════════════════════════════════
 //   Фокус и Мышка
@@ -97,102 +113,6 @@ void FocusGame() {
     if (g_gameWindow) {
         SetForegroundWindow(g_gameWindow);
         ClipCursor(NULL); 
-    }
-}
-
-// ═══════════════════════════════════════════
-//   SAFE SCANNER (F10)
-// ═══════════════════════════════════════════
-std::string GenerateDiagnostics() {
-    std::stringstream ss;
-    ss << "=== COMMANDVS SAFE SCANNER ===\r\n\r\n";
-    
-    int lp = Engine_LocalPlayer();
-    if (lp <= 0) return "Not in game!\r\n";
-
-    int hi = Entity_Highest();
-    void* targetEnt = nullptr;
-    for (int i = 1; i <= hi; i++) {
-        if (i == lp) continue;
-        void* e = Entity_Get(i);
-        if (e && IsPlayerEntitySafe(e)) { targetEnt = e; break; }
-    }
-
-    if (!targetEnt) return "No bots found! Type 'bot_add' in console.\r\n";
-
-    ss << "Player HP: " << Ent_Health(targetEnt) << "\r\n\r\n";
-
-    // 1. Ищем Origin бота
-    ss << "[ ORIGIN CANDIDATES ]\r\n";
-    uintptr_t base = (uintptr_t)targetEnt;
-    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
-        Vector v;
-        if (SafeRead(base + off, v)) {
-            if (fabsf(v.x) > 10.0f && fabsf(v.x) < 10000.0f &&
-                fabsf(v.y) > 10.0f && fabsf(v.y) < 10000.0f &&
-                v.z > -200.0f && v.z < 200.0f && fabsf(v.z) > 0.1f) {
-                ss << "0x" << std::hex << off << " -> X:" << std::dec << v.x << " Y:" << v.y << " Z:" << v.z << "\r\n";
-            }
-        }
-    }
-    ss << "\r\n";
-
-    // 2. Ищем Матрицу Камеры в памяти движка (Без вызова функций!)
-    ss << "[ MATRIX CANDIDATES (Inside Engine) ]\r\n";
-    uintptr_t engBase = (uintptr_t)g_engine;
-    for (uintptr_t off = 0x00; off < 0x4000; off += 4) {
-        VMatrix m;
-        if (SafeRead(engBase + off, m)) {
-            // Ищем идеальную матрицу (правый нижний угол 1.0)
-            if (m[3][3] > 0.99f && m[3][3] < 1.01f && m[0][0] > 0.1f && m[1][1] > 0.1f) {
-                ss << "Engine + 0x" << std::hex << off << " -> Matrix Found!\r\n";
-            }
-        }
-    }
-
-    return ss.str();
-}
-
-static HWND g_diagWnd = nullptr;
-
-void ToggleDiagWindow() {
-    if (IsWindow(g_diagWnd) && IsWindowVisible(g_diagWnd)) {
-        ShowWindow(g_diagWnd, SW_HIDE);
-        FocusGame();
-        return;
-    }
-
-    if (!IsWindow(g_diagWnd)) {
-        WNDCLASSEXA wc = { sizeof(wc) };
-        wc.lpfnWndProc = DefWindowProcA;
-        wc.hInstance = GetModuleHandleA(NULL);
-        wc.lpszClassName = "CommandvsDiag";
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-        RegisterClassExA(&wc);
-
-        g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // SAFE SCANNER (F10)",
-            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
-            NULL, NULL, wc.hInstance, NULL
-        );
-    }
-
-    if (g_diagWnd) {
-        std::string text = GenerateDiagnostics();
-        HWND edit = FindWindowExA(g_diagWnd, NULL, "EDIT", NULL);
-        if (edit) {
-            SetWindowTextA(edit, text.c_str());
-        } else {
-            edit = CreateWindowExA(
-                0, "EDIT", text.c_str(),
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
-                10, 10, 560, 440, g_diagWnd, NULL, GetModuleHandleA(NULL), NULL
-            );
-            HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
-            SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
-        }
-        ShowWindow(g_diagWnd, SW_SHOW);
-        SetForegroundWindow(g_diagWnd);
     }
 }
 
@@ -215,11 +135,21 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
+void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color) {
+    DrawRect(x, y, w, thickness, color);
+    DrawRect(x, y + h - thickness, w, thickness, color);
+    DrawRect(x, y, thickness, h, color);
+    DrawRect(x + w - thickness, y, thickness, h, color);
+}
+
 // ═══════════════════════════════════════════
-//   ESP
+//   ESP Логика
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
+    bool box = true;
+    D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56); 
+    D3DCOLOR fillColor = D3DCOLOR_ARGB(40, 232, 168, 56);
 } g_esp;
 
 void DrawESP() {
@@ -233,11 +163,35 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
+    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // Красный квадрат для проверки
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); 
+    if (!Engine_InGame()) return;
+    int lp = Engine_LocalPlayer();
+    if (lp <= 0) return;
 
-    // Отрисовка боксов временно отключена, пока не найдем оффсеты через сканер
+    int hi = Entity_Highest();
+    for (int i = 1; i <= hi; i++) {
+        if (i == lp) continue;
+        void* e = Entity_Get(i);
+        if (!e || !IsPlayerEntitySafe(e)) continue;
+
+        Vector feet = Ent_Origin(e);
+        Vector head = feet + Vector(0, 0, 72);
+
+        Vector sH, sF;
+        if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
+            float h = sF.y - sH.y;
+            if (h > 4 && h < 1800) {
+                float w = h * 0.42f;
+                float x0 = sH.x - w * 0.5f;
+                float y0 = sH.y;
+
+                DrawRect(x0, y0, w, h, g_esp.fillColor);
+                if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
+            }
+        }
+    }
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
@@ -301,7 +255,7 @@ void drawToggle(HDC dc, RECT row, bool on) {
 void LayoutUI() {
     g_ctrls.clear();
     int cx = 16, cw = WW - 32, y = HH + TBH + 16;
-    g_ctrls.push_back({ cx, y, cx + cw, y + 26 }); // ESP Toggle Rect
+    g_ctrls.push_back({ cx, y, cx + cw, y + 26 });
 }
 
 void DrawUI(HDC dc) {
@@ -311,7 +265,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for safe scan");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // final");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -383,8 +337,6 @@ DWORD WINAPI MenuThread(LPVOID) {
     HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
     
     RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    RegisterHotKey(g_wnd, 2, MOD_NOREPEAT, VK_F10);
-    
     ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
 
     MSG msg;
@@ -393,8 +345,6 @@ DWORD WINAPI MenuThread(LPVOID) {
             if (msg.wParam == 1) {
                 if (IsWindowVisible(g_wnd)) { ShowWindow(g_wnd, SW_HIDE); FocusGame(); }
                 else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
-            } else if (msg.wParam == 2) {
-                ToggleDiagWindow();
             }
             continue;
         }
