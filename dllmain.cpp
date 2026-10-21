@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP
+// commandvs.cpp — css v34 (VEngineClient011) FINAL DEBUG
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -45,12 +45,12 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ (НАЙДЕНЫ СКАНЕРОМ)
+// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ
 namespace Off {
-    constexpr uintptr_t Health    = 0xDA4; // Найдено
-    constexpr uintptr_t Team      = 0x90;  // Найдено
-    constexpr uintptr_t Origin    = 0x1D4; // Найдено на последнем скане
-    constexpr uintptr_t BoneMat   = 0x4E4; // Найдено
+    constexpr uintptr_t Health    = 0xDA4;
+    constexpr uintptr_t Team      = 0x90;
+    constexpr uintptr_t Origin    = 0x1D4;
+    constexpr uintptr_t BoneMat   = 0x4E4;
 }
 
 int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
@@ -61,7 +61,7 @@ bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); retu
 void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
 int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
 
-// БЕЗОПАСНАЯ проверка (используем только что найденные HP и Кости)
+// БЕЗОПАСНАЯ проверка
 bool IsPlayerEntitySafe(void* ent) {
     if (!ent || (uintptr_t)ent < 0x10000) return false;
     
@@ -140,7 +140,7 @@ void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика
+//   ESP Логика (DEBUG)
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
@@ -163,30 +163,44 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); // Индикатор
+    // 1. КРАСНЫЙ: Дошли до DrawESP
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
 
     if (!Engine_InGame()) return;
+    // 2. ЗЕЛЕНЫЙ: Мы на карте
+    DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
+
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
+    // 3. СИНИЙ: Нашли себя
+    DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
 
     int hi = Entity_Highest();
+    int foundPlayers = 0;
+
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
-        if (!e || !IsPlayerEntitySafe(e)) continue;
+        if (!e) continue;
 
-        matrix3x4_t* b = Ent_Bones(e);
-        if (!b) continue;
+        // 4. ЖЕЛТЫЙ: Нашли хоть какую-то сущность
+        DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
+
+        if (!IsPlayerEntitySafe(e)) continue;
         
-        // Голова (Bone 8) и Пятки (Bone 0)
-        Vector head = BonePos(b, 8);
-        Vector feet = BonePos(b, 0);
-        
-        if (head.Length() < 0.1f || feet.Length() < 0.1f) continue;
+        // 5. БЕЛЫЙ: Сущность прошла проверку на игрока
+        DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
+        foundPlayers++;
+
+        Vector feet = Ent_Origin(e);
+        Vector head = feet + Vector(0, 0, 72); // Рисуем от Origin вверх
 
         Vector sH, sF;
         if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
         
+        // 6. ФИОЛЕТОВЫЙ: WorldToScreen сработал (игрок на экране)
+        DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
+
         float h = sF.y - sH.y;
         if (h > 4 && h < 1800) {
             float w = h * 0.42f;
@@ -196,6 +210,11 @@ void DrawESP() {
             DrawRect(x0, y0, w, h, g_esp.fillColor);
             if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
         }
+    }
+
+    if (foundPlayers > 0) {
+        // 7. БИРЮЗОВЫЙ: Игроки найдены (даже если они за спиной)
+        DrawRect(190, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 255)); 
     }
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
@@ -296,7 +315,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // final");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // debug");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -381,8 +400,6 @@ DWORD WINAPI MenuThread(LPVOID) {
     HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
     
     RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    RegisterHotKey(g_wnd, 2, MOD_NOREPEAT, VK_F10);
-    
     ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
 
     MSG msg;
