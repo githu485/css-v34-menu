@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + AUTO FIND INDEX
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + SAFE DIAGNOSTICS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -44,9 +44,9 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENGINE_W2SMATRIX     37
 #define VT_ENGINE_ISINGAME      26
 
-// Динамические индексы (по умолчанию 3 и 6)
-int g_entity_get_idx = 3;
-int g_entity_highest_idx = 6;
+// Жесткие индексы для Source 2007
+#define VT_ENTITY_GET            3
+#define VT_ENTITY_HIGHEST        6
 
 namespace Off {
     constexpr uintptr_t Health    = 0xFC;   
@@ -60,17 +60,22 @@ void Engine_ScreenSize(int& w, int& h){ typedef void(__thiscall* F)(void*,int&,i
 VMatrix* Engine_W2SM()                { typedef VMatrix*(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_W2SMATRIX)(g_engine); }
 bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_ISINGAME)(g_engine); }
 
-void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, g_entity_get_idx)(g_entityList, i); }
-int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, g_entity_highest_idx)(g_entityList); }
+void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
+int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
 
-bool IsPlayerEntity(void* ent) {
+// БЕЗОПАСНАЯ проверка (без вызова виртуальных функций игры)
+bool IsPlayerEntitySafe(void* ent) {
     if (!ent || (uintptr_t)ent < 0x10000) return false;
-    typedef void* (__thiscall* GetClientClassFn)(void*);
-    void* cc = vf<GetClientClassFn>(ent, 2)(ent);
-    if (!cc) return false;
-    const char* name = *(const char**)((uintptr_t)cc + 0x8);
-    if (!name) return false;
-    return (strstr(name, "Player") != nullptr || strstr(name, "player") != nullptr);
+    
+    // Читаем HP
+    int hp = *(int*)((uintptr_t)ent + Off::Health);
+    if (hp <= 0 || hp > 100) return false;
+
+    // Читаем Origin (проверяем, что координаты не нулевые)
+    Vector origin = *(Vector*)((uintptr_t)ent + Off::Origin);
+    if (origin.x == 0.0f && origin.y == 0.0f && origin.z == 0.0f) return false;
+
+    return true;
 }
 
 int  Ent_Health(void* e) { return *(int*)((uintptr_t)e + Off::Health); }
@@ -113,104 +118,53 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   ЗАЩИТА ОТ КРАШЕЙ ПРИ ПЕРЕБОРЕ VTABLE
-// ═══════════════════════════════════════════
-static bool g_crashFound = false;
-LONG CALLBACK VectoredHandler(PEXCEPTION_POINTERS p) {
-    g_crashFound = true;
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
-// ═══════════════════════════════════════════
-//   RAW Diagnostic Window (F10 Toggle)
+//   SAFE Diagnostic Window (F10 Toggle)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS AUTO-FIND DIAGNOSTICS ===\n\n";
+    ss << "=== COMMANDVS SAFE DIAGNOSTICS ===\n\n";
     ss << "Engine: VEngineClient011\n";
-
+    
     int lp = Engine_LocalPlayer();
-    ss << "LocalPlayer Index: " << lp << "\n\n";
-
-    // --- АВТО-ПОИСК HIGHEST ENTITY INDEX ---
-    ss << "--- Searching for HighestEntityIndex ---\n";
-    for (int idx = 4; idx <= 10; idx++) {
-        g_crashFound = false;
-        PVOID handler = AddVectoredExceptionHandler(1, VectoredHandler);
-        
-        int val = 0;
-        typedef int(__thiscall* F)(void*);
-        val = vf<F>(g_entityList, idx)(g_entityList);
-        
-        RemoveVectoredExceptionHandler(handler);
-        if (!g_crashFound && val > 0 && val < 10000) {
-            g_entity_highest_idx = idx;
-            ss << "Found! Index " << idx << " returned " << val << "\n";
-            break;
-        }
-    }
-    ss << "Using Highest Index: " << g_entity_highest_idx << "\n\n";
-
-    // --- АВТО-ПОИСК GET CLIENT ENTITY ---
-    ss << "--- Searching for GetClientEntity ---\n";
-    for (int idx = 1; idx <= 10; idx++) {
-        g_crashFound = false;
-        PVOID handler = AddVectoredExceptionHandler(1, VectoredHandler);
-        
-        void* ent = nullptr;
-        typedef void*(__thiscall* F)(void*, int);
-        ent = vf<F>(g_entityList, idx)(g_entityList, lp); // Проверяем на LocalPlayer
-        
-        RemoveVectoredExceptionHandler(handler);
-        
-        if (!g_crashFound && ent && (uintptr_t)ent > 0x10000) {
-            if (IsPlayerEntity(ent)) {
-                g_entity_get_idx = idx;
-                ss << "Found! Index " << idx << " returned valid Player Entity\n";
-                break;
-            }
-        }
-    }
-    ss << "Using GetClientEntity Index: " << g_entity_get_idx << "\n\n";
-
-    // --- СКАНИРОВАНИЕ ИГРОКОВ ---
+    ss << "LocalPlayer Index: " << lp << "\n";
+    
     int hi = Entity_Highest();
     ss << "Highest Entity Index (hi): " << hi << "\n\n";
 
     int foundPlayers = 0;
+
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
         if (!e) continue;
 
-        std::string cName = "Unknown";
-        typedef void* (__thiscall* GetClientClassFn)(void*);
-        void* cc = vf<GetClientClassFn>(e, 2)(e);
-        if (cc) {
-            const char* namePtr = *(const char**)((uintptr_t)cc + 0x8);
-            if (namePtr) cName = namePtr;
-        }
-
-        if (cName.find("Player") != std::string::npos || cName.find("player") != std::string::npos) {
+        if (IsPlayerEntitySafe(e)) {
             foundPlayers++;
-            ss << "--- ENTITY " << i << ": " << cName << " ---\n";
+            ss << "--- PLAYER ENTITY " << i << " ---\n";
             
-            int hp = *(int*)((uintptr_t)e + 0xFC);
-            int team = *(int*)((uintptr_t)e + 0x98);
+            int hp = Ent_Health(e);
+            int team = Ent_Team(e);
             ss << "HP [0xFC]: " << hp << "\n";
-            ss << "Team [0x98]: " << team << " (2=T, 3=CT, 1=Spec)\n";
+            ss << "Team [0x98]: " << team << " (2=T, 3=CT)\n";
             
-            uintptr_t bonePtr = *(uintptr_t*)((uintptr_t)e + 0x4E4);
+            uintptr_t bonePtr = *(uintptr_t*)((uintptr_t)e + Off::BoneMat);
             ss << "BoneMatrix [0x4E4]: " << (void*)bonePtr << "\n";
             
-            Vector origin = *(Vector*)((uintptr_t)e + 0x128);
-            ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n\n";
+            Vector origin = Ent_Origin(e);
+            ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n";
+            
+            if (bonePtr) {
+                Vector head = BonePos((matrix3x4_t*)bonePtr, 8);
+                ss << "Head Bone (8): X:" << head.x << " Y:" << head.y << " Z:" << head.z << "\n";
+            }
+            ss << "\n";
         }
     }
     
     if (foundPlayers == 0) {
         ss << "!!! NO PLAYERS FOUND !!!\n";
         ss << "Make sure you added bots (type 'bot_add' in console).\n";
+        ss << "If bots are present, the offsets (HP/Origin) might be wrong.\n";
     }
 
     return ss.str();
@@ -234,7 +188,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // AUTO-FIND Diagnostics (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // SAFE Diagnostics (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -321,7 +275,7 @@ void DrawESP() {
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
-        if (!e || !IsPlayerEntity(e)) continue;
+        if (!e || !IsPlayerEntitySafe(e)) continue;
 
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
@@ -445,7 +399,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for auto-find diag");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for safe diag");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
