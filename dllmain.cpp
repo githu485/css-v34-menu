@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + SAFE DIAGNOSTICS
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + OFFSET SCANNER
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -63,18 +63,12 @@ bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); retu
 void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
 int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
 
-// БЕЗОПАСНАЯ проверка (без вызова виртуальных функций игры)
 bool IsPlayerEntitySafe(void* ent) {
     if (!ent || (uintptr_t)ent < 0x10000) return false;
-    
-    // Читаем HP
     int hp = *(int*)((uintptr_t)ent + Off::Health);
     if (hp <= 0 || hp > 100) return false;
-
-    // Читаем Origin (проверяем, что координаты не нулевые)
     Vector origin = *(Vector*)((uintptr_t)ent + Off::Origin);
     if (origin.x == 0.0f && origin.y == 0.0f && origin.z == 0.0f) return false;
-
     return true;
 }
 
@@ -118,53 +112,53 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   SAFE Diagnostic Window (F10 Toggle)
+//   OFFSET SCANNER DIAGNOSTICS (F10)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS SAFE DIAGNOSTICS ===\n\n";
-    ss << "Engine: VEngineClient011\n";
+    ss << "=== COMMANDVS OFFSET SCANNER ===\n\n";
     
     int lp = Engine_LocalPlayer();
     ss << "LocalPlayer Index: " << lp << "\n";
     
-    int hi = Entity_Highest();
-    ss << "Highest Entity Index (hi): " << hi << "\n\n";
-
-    int foundPlayers = 0;
-
-    for (int i = 1; i <= hi; i++) {
-        if (i == lp) continue;
-        void* e = Entity_Get(i);
-        if (!e) continue;
-
-        if (IsPlayerEntitySafe(e)) {
-            foundPlayers++;
-            ss << "--- PLAYER ENTITY " << i << " ---\n";
-            
-            int hp = Ent_Health(e);
-            int team = Ent_Team(e);
-            ss << "HP [0xFC]: " << hp << "\n";
-            ss << "Team [0x98]: " << team << " (2=T, 3=CT)\n";
-            
-            uintptr_t bonePtr = *(uintptr_t*)((uintptr_t)e + Off::BoneMat);
-            ss << "BoneMatrix [0x4E4]: " << (void*)bonePtr << "\n";
-            
-            Vector origin = Ent_Origin(e);
-            ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n";
-            
-            if (bonePtr) {
-                Vector head = BonePos((matrix3x4_t*)bonePtr, 8);
-                ss << "Head Bone (8): X:" << head.x << " Y:" << head.y << " Z:" << head.z << "\n";
-            }
-            ss << "\n";
-        }
+    void* lpE = Entity_Get(lp);
+    if (!lpE) {
+        ss << "LocalPlayer Entity is NULL!\n";
+        return ss.str();
     }
     
-    if (foundPlayers == 0) {
-        ss << "!!! NO PLAYERS FOUND !!!\n";
-        ss << "Make sure you added bots (type 'bot_add' in console).\n";
-        ss << "If bots are present, the offsets (HP/Origin) might be wrong.\n";
+    ss << "LocalPlayer Address: " << lpE << "\n";
+    ss << "Scanning memory for Health (100) and Origin (XYZ)...\n\n";
+
+    uintptr_t base = (uintptr_t)lpE;
+
+    // 1. Ищем здоровье (число 100)
+    ss << "--- CANDIDATES FOR HEALTH (Value = 100) ---\n";
+    for (uintptr_t offset = 0x00; offset < 0x2000; offset += 4) {
+        int val = *(int*)(base + offset);
+        if (val == 100) {
+            ss << "Offset 0x" << std::hex << offset << " -> 100\n";
+        }
+    }
+    ss << "\n";
+
+    // 2. Ищем координаты (Origin)
+    // Координаты в Source - это 3 float подряд (X, Y, Z).
+    ss << "--- CANDIDATES FOR ORIGIN (XYZ Floats) ---\n";
+    for (uintptr_t offset = 0x00; offset < 0x2000; offset += 4) {
+        float x = *(float*)(base + offset);
+        float y = *(float*)(base + offset + 4);
+        float z = *(float*)(base + offset + 8);
+
+        if (x > -10000 && x < 10000 && x != 0.0f &&
+            y > -10000 && y < 10000 && y != 0.0f &&
+            z > -10000 && z < 10000 && z != 0.0f) {
+            
+            // Проверка, чтобы отсеять мелкие числа (углы обзора и т.д.)
+            if (fabsf(x) > 10.0f || fabsf(y) > 10.0f || fabsf(z) > 10.0f) {
+                ss << "Offset 0x" << std::hex << offset << " -> X:" << std::dec << x << " Y:" << y << " Z:" << z << "\n";
+            }
+        }
     }
 
     return ss.str();
@@ -188,7 +182,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // SAFE Diagnostics (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // OFFSET SCANNER (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -399,7 +393,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for safe diag");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offset scanner");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
