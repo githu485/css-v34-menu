@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP
+// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP (Matrix 2)
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -49,7 +49,7 @@ namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
     constexpr uintptr_t Origin    = 0x1b18; // Найдено сканером!
     constexpr uintptr_t BoneMat   = 0x4E4;
-    constexpr uintptr_t W2SMatrix = 0x2db4; // Смещение от g_engine
+    constexpr uintptr_t W2SMatrix = 0x3094; // ПРОБУЕМ ВТОРОЙ ВАРИАНТ!
 }
 
 // Безопасное чтение памяти
@@ -88,7 +88,6 @@ int  Ent_Health(void* e) { int hp = 0; SafeRead((uintptr_t)e + Off::Health, hp);
 Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
 
 bool WorldToScreen(const Vector& w, Vector& out) {
-    // Читаем матрицу напрямую из памяти движка!
     VMatrix* m = (VMatrix*)((uintptr_t)g_engine + Off::W2SMatrix);
     
     float cw = (*m)[3][0]*w.x + (*m)[3][1]*w.y + (*m)[3][2]*w.z + (*m)[3][3];
