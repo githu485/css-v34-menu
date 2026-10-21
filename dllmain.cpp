@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + CLEAN OFFSET SCANNER
+// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -8,8 +8,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <sstream>
-#include <fstream>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -47,11 +45,12 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
+// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ (НАЙДЕНЫ СКАНЕРОМ)
 namespace Off {
-    constexpr uintptr_t Health    = 0xFC;   
-    constexpr uintptr_t Team      = 0x98;   
-    constexpr uintptr_t Origin    = 0x128;  
-    constexpr uintptr_t BoneMat   = 0x4E4;  
+    constexpr uintptr_t Health    = 0xDA4; // Найдено
+    constexpr uintptr_t Team      = 0x90;  // Найдено
+    constexpr uintptr_t Origin    = 0x1D4; // Найдено на последнем скане
+    constexpr uintptr_t BoneMat   = 0x4E4; // Найдено
 }
 
 int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
@@ -62,12 +61,16 @@ bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); retu
 void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
 int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
 
+// БЕЗОПАСНАЯ проверка (используем только что найденные HP и Кости)
 bool IsPlayerEntitySafe(void* ent) {
     if (!ent || (uintptr_t)ent < 0x10000) return false;
+    
     int hp = *(int*)((uintptr_t)ent + Off::Health);
     if (hp <= 0 || hp > 100) return false;
-    Vector origin = *(Vector*)((uintptr_t)ent + Off::Origin);
-    if (origin.x == 0.0f && origin.y == 0.0f && origin.z == 0.0f) return false;
+
+    uintptr_t bonePtr = *(uintptr_t*)((uintptr_t)ent + Off::BoneMat);
+    if (bonePtr < 0x10000000 || bonePtr > 0x7FFFFFFF) return false;
+
     return true;
 }
 
@@ -107,125 +110,6 @@ void FocusGame() {
     if (g_gameWindow) {
         SetForegroundWindow(g_gameWindow);
         ClipCursor(NULL); 
-    }
-}
-
-// ═══════════════════════════════════════════
-//   CLEAN OFFSET SCANNER (F10)
-// ═══════════════════════════════════════════
-std::string GenerateDiagnostics() {
-    std::stringstream ss;
-    ss << "=== COMMANDVS OFFSETS ===\n\n";
-    
-    int lp = Engine_LocalPlayer();
-    void* lpE = Entity_Get(lp);
-    if (!lpE) return "LocalPlayer is NULL!\n";
-    
-    uintptr_t base = (uintptr_t)lpE;
-    ss << "Base Address: 0x" << std::hex << base << "\n\n";
-
-    // 1. Сканируем здоровье (ищем целое число 100)
-    ss << "[ HEALTH OFFSET ]\n";
-    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
-        int val = *(int*)(base + off);
-        if (val == 100) {
-            ss << "0x" << std::hex << off << " -> Health (100)\n";
-        }
-    }
-    ss << "\n";
-
-    // 2. Сканируем команду (2 = T, 3 = CT)
-    ss << "[ TEAM OFFSET ]\n";
-    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
-        int val = *(int*)(base + off);
-        if (val == 2 || val == 3) {
-            int next = *(int*)(base + off + 4);
-            if (next == 0) {
-                ss << "0x" << std::hex << off << " -> Team (" << std::dec << val << ")\n";
-            }
-        }
-    }
-    ss << "\n";
-
-    // 3. Сканируем координаты (X, Y, Z)
-    ss << "[ ORIGIN OFFSET (XYZ) ]\n";
-    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
-        float x = *(float*)(base + off);
-        float y = *(float*)(base + off + 4);
-        float z = *(float*)(base + off + 8);
-
-        if (fabsf(x) > 100.0f && fabsf(x) < 10000.0f &&
-            fabsf(y) > 100.0f && fabsf(y) < 10000.0f &&
-            fabsf(z) > 0.1f && fabsf(z) < 500.0f) {
-            ss << "0x" << std::hex << off << " -> Origin (X:" << std::dec << x << " Y:" << y << " Z:" << z << ")\n";
-        }
-    }
-    ss << "\n";
-
-    // 4. Сканируем указатель на матрицу костей (BoneMatrix)
-    ss << "[ BONEMATRIX OFFSET (Pointer) ]\n";
-    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
-        uintptr_t ptr = *(uintptr_t*)(base + off);
-        if (ptr > 0x10000000 && ptr < 0x7FFFFFFF) {
-            // Используем VirtualQuery вместо __try/__except (чтобы MinGW не ругался)
-            MEMORY_BASIC_INFORMATION mbi;
-            if (VirtualQuery((LPCVOID)ptr, &mbi, sizeof(mbi))) {
-                if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))) {
-                    ss << "0x" << std::hex << off << " -> BoneMatrix Ptr (0x" << ptr << ")\n";
-                }
-            }
-        }
-    }
-
-    std::ofstream out("C:\\commandvs_diag.txt");
-    out << ss.str();
-    out.close();
-
-    return ss.str();
-}
-
-static HWND g_diagWnd = nullptr;
-
-void ToggleDiagWindow() {
-    if (IsWindow(g_diagWnd) && IsWindowVisible(g_diagWnd)) {
-        ShowWindow(g_diagWnd, SW_HIDE);
-        FocusGame();
-        return;
-    }
-
-    if (!IsWindow(g_diagWnd)) {
-        WNDCLASSEXA wc = { sizeof(wc) };
-        wc.lpfnWndProc = DefWindowProcA;
-        wc.hInstance = GetModuleHandleA(NULL);
-        wc.lpszClassName = "CommandvsDiag";
-        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-        RegisterClassExA(&wc);
-
-        g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // CLEAN OFFSETS (F10 to close)",
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
-            NULL, NULL, wc.hInstance, NULL
-        );
-    }
-
-    if (g_diagWnd) {
-        std::string text = GenerateDiagnostics();
-        HWND edit = FindWindowExA(g_diagWnd, NULL, "EDIT", NULL);
-        if (edit) {
-            SetWindowTextA(edit, text.c_str());
-        } else {
-            edit = CreateWindowExA(
-                0, "EDIT", text.c_str(),
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
-                10, 10, 560, 440, g_diagWnd, NULL, GetModuleHandleA(NULL), NULL
-            );
-            HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
-            SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
-        }
-
-        ShowWindow(g_diagWnd, SW_SHOW);
-        SetForegroundWindow(g_diagWnd);
     }
 }
 
@@ -279,7 +163,7 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); // Индикатор
 
     if (!Engine_InGame()) return;
     int lp = Engine_LocalPlayer();
@@ -291,27 +175,26 @@ void DrawESP() {
         void* e = Entity_Get(i);
         if (!e || !IsPlayerEntitySafe(e)) continue;
 
-        int hp = Ent_Health(e);
-        if (hp > 0 && hp <= 100) {
-            Vector feet = Ent_Origin(e);
-            matrix3x4_t* b = Ent_Bones(e);
-            if (!b) continue;
-            
-            Vector head = BonePos(b, 8);
-            if (head.Length() < 0.1f) head = feet + Vector(0, 0, 72);
+        matrix3x4_t* b = Ent_Bones(e);
+        if (!b) continue;
+        
+        // Голова (Bone 8) и Пятки (Bone 0)
+        Vector head = BonePos(b, 8);
+        Vector feet = BonePos(b, 0);
+        
+        if (head.Length() < 0.1f || feet.Length() < 0.1f) continue;
 
-            Vector sH, sF;
-            if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
-            
-            float h = sF.y - sH.y;
-            if (h > 4 && h < 1800) {
-                float w = h * 0.42f;
-                float x0 = sH.x - w * 0.5f;
-                float y0 = sH.y;
+        Vector sH, sF;
+        if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
+        
+        float h = sF.y - sH.y;
+        if (h > 4 && h < 1800) {
+            float w = h * 0.42f;
+            float x0 = sH.x - w * 0.5f;
+            float y0 = sH.y;
 
-                DrawRect(x0, y0, w, h, g_esp.fillColor);
-                if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
-            }
+            DrawRect(x0, y0, w, h, g_esp.fillColor);
+            if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
         }
     }
 
@@ -413,7 +296,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for clean offsets");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // final");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -508,8 +391,6 @@ DWORD WINAPI MenuThread(LPVOID) {
             if (msg.wParam == 1) {
                 if (IsWindowVisible(g_wnd)) { ShowWindow(g_wnd, SW_HIDE); FocusGame(); }
                 else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
-            } else if (msg.wParam == 2) {
-                ToggleDiagWindow();
             }
             continue;
         }
