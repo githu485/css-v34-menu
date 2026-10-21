@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) BLUE BOX TEST
+// commandvs.cpp — css v34 RENDER TEST (Present + EndScene)
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -7,111 +7,26 @@
 #include <vector>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
 #pragma comment(lib, "d3d9.lib")
 
 // ═══════════════════════════════════════════
-//   SDK & Math
-// ═══════════════════════════════════════════
-struct Vector {
-    float x, y, z;
-    Vector() : x(0), y(0), z(0) {}
-    Vector(float a, float b, float c) : x(a), y(b), z(c) {}
-    Vector operator+(const Vector& v) const { return { x+v.x, y+v.y, z+v.z }; }
-    Vector operator-(const Vector& v) const { return { x-v.x, y-v.y, z-v.z }; }
-    float Length() const { return sqrtf(x*x + y*y + z*z); }
-};
-struct matrix3x4_t { float m[3][4]; };
-struct VMatrix { float m[4][4]; float* operator[](int i){ return m[i]; } const float* operator[](int i) const { return m[i]; } };
-
-// ═══════════════════════════════════════════
-//   Interfaces & Offsets
+//   Interfaces & Globals
 // ═══════════════════════════════════════════
 typedef void* (*CreateInterfaceFn)(const char*, int*);
 void* g_engine = nullptr;
-void* g_entityList = nullptr;
+IDirect3DDevice9* g_pDevice = nullptr;
+bool g_showSquare = false;
 
 template<typename T> T vf(void* inst, int idx) {
     return (T)(*(void***)inst)[idx];
 }
 
-#define VT_ENGINE_LOCALPLAYER   12
-#define VT_ENGINE_SCREENSIZE     5
-#define VT_ENGINE_ISINGAME      26
-#define VT_ENTITY_GET            3
-#define VT_ENTITY_HIGHEST        6
-
-// ОФФСЕТЫ
-namespace Off {
-    constexpr uintptr_t Health    = 0xDA4;
-    constexpr uintptr_t Origin    = 0x1b18; 
-    constexpr uintptr_t BoneMat   = 0x4E4;
-    constexpr uintptr_t W2SMatrix = 0x3094; 
-}
-
-template<typename T>
-bool SafeRead(uintptr_t addr, T& out) {
-    if (addr < 0x10000) return false;
-    MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery((LPCVOID)addr, &mbi, sizeof(mbi))) {
-        if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))) {
-            out = *(T*)addr;
-            return true;
-        }
-    }
-    return false;
-}
-
-int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
-void Engine_ScreenSize(int& w, int& h){ typedef void(__thiscall* F)(void*,int&,int&); vf<F>(g_engine, VT_ENGINE_SCREENSIZE)(g_engine,w,h); }
-bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_ISINGAME)(g_engine); }
-void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
-int   Entity_Highest()                { typedef int(__thiscall* F)(void*); return vf<F>(g_entityList, VT_ENTITY_HIGHEST)(g_entityList); }
-
-bool IsPlayerEntitySafe(void* ent) {
-    if (!ent) return false;
-    int hp = 0;
-    if (!SafeRead((uintptr_t)ent + Off::Health, hp)) return false;
-    if (hp <= 0 || hp > 100) return false;
-    uintptr_t bonePtr = 0;
-    if (!SafeRead((uintptr_t)ent + Off::BoneMat, bonePtr)) return false;
-    if (bonePtr < 0x10000000 || bonePtr > 0x7FFFFFFF) return false;
-    return true;
-}
-
-Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
-
-bool WorldToScreen(const Vector& w, Vector& out) {
-    VMatrix* m = (VMatrix*)((uintptr_t)g_engine + Off::W2SMatrix);
-    float cw = (*m)[3][0]*w.x + (*m)[3][1]*w.y + (*m)[3][2]*w.z + (*m)[3][3];
-    if (cw < 0.001f) return false;
-    float iw = 1.0f / cw;
-    float sx = ((*m)[0][0]*w.x + (*m)[0][1]*w.y + (*m)[0][2]*w.z + (*m)[0][3]) * iw;
-    float sy = ((*m)[1][0]*w.x + (*m)[1][1]*w.y + (*m)[1][2]*w.z + (*m)[1][3]) * iw;
-    
-    int sw, sh; Engine_ScreenSize(sw, sh);
-    out.x = (sw * 0.5f) + (sx * sw) * 0.5f;
-    out.y = (sh * 0.5f) - (sy * sh) * 0.5f;
-    return true;
-}
-
-// ═══════════════════════════════════════════
-//   Фокус и Мышка
-// ═══════════════════════════════════════════
-HWND g_gameWindow = nullptr;
-void FocusGame() {
-    if (!g_gameWindow) g_gameWindow = FindWindowA("Valve001", NULL);
-    if (g_gameWindow) { SetForegroundWindow(g_gameWindow); ClipCursor(NULL); }
-}
-
 // ═══════════════════════════════════════════
 //   DirectX 9 Render
 // ═══════════════════════════════════════════
-IDirect3DDevice9* g_pDevice = nullptr;
-
 void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     if (!g_pDevice) return;
     struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
@@ -126,61 +41,92 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
-void DrawLine(float x1, float y1, float x2, float y2, D3DCOLOR color) {
-    if (!g_pDevice) return;
-    struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
-    Vertex v[2] = { { x1, y1, 0.0f, 1.0f, color }, { x2, y2, 0.0f, 1.0f, color } };
-    g_pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
-    g_pDevice->SetTexture(0, NULL);
-    g_pDevice->DrawPrimitiveUP(D3DPT_LINELIST, 1, v, sizeof(Vertex));
+void RenderTest(int offsetX, D3DCOLOR color) {
+    if (!g_showSquare || !g_pDevice) return;
+
+    DWORD oldZ, oldAlpha, oldLighting, oldCull;
+    g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
+    g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
+    g_pDevice->GetRenderState(D3DRS_LIGHTING, &oldLighting);
+    g_pDevice->GetRenderState(D3DRS_CULLMODE, &oldCull);
+
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
+    g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    
+    // Рисуем квадрат 200х200
+    DrawRect(sw/2 - 100 + offsetX, sh/2 - 100, 200, 200, color);
+
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
+    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
+    g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
+    g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика
+//   Hooks (Present + EndScene)
 // ═══════════════════════════════════════════
-struct ESP {
-    bool enabled = true; 
-    bool blueBox = false; // Состояние тумблера Blue Box
-} g_esp;
+typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+Present_t g_origPresent = nullptr;
 
-void DrawESP() {
-    if (!g_pDevice) return;
+HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
+    g_pDevice = pDevice;
+    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный слева
+    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
+}
 
-    int sw, sh; 
-    if (Engine_ScreenSize) Engine_ScreenSize(sw, sh); else return;
-    int centerX = sw / 2;
-    int centerY = sh / 2;
+typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
+EndScene_t g_origEndScene = nullptr;
 
-    // Рисуем синий квадрат по центру, если включен тумблер
-    if (g_esp.blueBox) {
-        DrawRect(centerX - 50, centerY - 50, 100, 100, D3DCOLOR_ARGB(255, 0, 0, 255));
+HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
+    g_pDevice = pDevice;
+    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий справа
+    return g_origEndScene(pDevice);
+}
+
+void HookD3D9() {
+    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
+    IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!pD3D) return;
+    
+    D3DPRESENT_PARAMETERS d3dpp = { 0 };
+    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+    
+    IDirect3DDevice9* pDevice = nullptr;
+    // Используем HAL для получения настоящего vtable
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    
+    if (pDevice) {
+        void** vTable = *(void***)pDevice;
+        DWORD old;
+        
+        // Хук Present (17)
+        g_origPresent = (Present_t)vTable[17];
+        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[17] = (void*)hkPresent;
+        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
+        
+        // Хук EndScene (42)
+        g_origEndScene = (EndScene_t)vTable[42];
+        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[42] = (void*)hkEndScene;
+        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+        
+        pDevice->Release();
     }
-
-    if (!Engine_InGame() || !g_esp.enabled) return;
-
-    int lp = Engine_LocalPlayer();
-    if (lp <= 0) return;
-
-    int hi = Entity_Highest();
-    for (int i = 1; i <= hi; i++) {
-        if (i == lp) continue;
-        void* e = Entity_Get(i);
-        if (!e || !IsPlayerEntitySafe(e)) continue;
-
-        Vector feet = Ent_Origin(e);
-        Vector head = feet + Vector(0, 0, 72);
-
-        Vector sH, sF;
-        if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-            // Линии к врагам
-            DrawLine(centerX, centerY, sH.x, sH.y, D3DCOLOR_ARGB(255, 0, 255, 0)); // К голове
-            DrawLine(centerX, centerY, sF.x, sF.y, D3DCOLOR_ARGB(255, 255, 0, 0)); // К ногам
-        }
-    }
+    pD3D->Release();
+    DestroyWindow(hwnd);
 }
 
 // ═══════════════════════════════════════════
-//   Меню (Win32)
+//   Меню
 // ═══════════════════════════════════════════
 namespace P {
     const COLORREF BG = RGB(18, 19, 23), HEAD_A = RGB(30, 32, 40), HEAD_B = RGB(22, 24, 30);
@@ -189,11 +135,11 @@ namespace P {
     const COLORREF KNOB = RGB(240, 241, 246), CLOSE_H = RGB(210, 70, 70), ROW_HOV = RGB(24, 26, 32);
 }
 
-const int WW = 320, WH = 220, HH = 44, TBH = 34;
+const int WW = 320, WH = 160, HH = 44, TBH = 34;
 HWND g_wnd = nullptr;
 HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
 volatile bool g_closing = false;
-std::vector<RECT> g_ctrls;
+RECT g_toggleRect;
 
 void fillRect(HDC dc, RECT r, COLORREF c) { HBRUSH br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
 void fillGrad(HDC dc, RECT r, COLORREF top, COLORREF bot) {
@@ -207,12 +153,6 @@ void fillRound(HDC dc, RECT r, COLORREF c, int rad) {
     RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
     SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pen);
 }
-void strokeRound(HDC dc, RECT r, COLORREF c, int rad) {
-    HPEN pen = CreatePen(PS_SOLID, 1, c); HGDIOBJ op = SelectObject(dc, pen);
-    HGDIOBJ ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
-    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(pen);
-}
 void txt(HDC dc, HFONT f, COLORREF c, int x, int y, const char* s) {
     SelectObject(dc, f); SetTextColor(dc, c); SetBkMode(dc, TRANSPARENT); TextOutA(dc, x, y, s, (int)strlen(s));
 }
@@ -225,16 +165,6 @@ void drawToggle(HDC dc, RECT row, bool on) {
     fillRound(dc, k, P::KNOB, ks);
 }
 
-void LayoutUI() {
-    g_ctrls.clear();
-    int cx = 16, cw = WW - 32, y = HH + TBH + 16;
-    // Тумблер 1: Enable ESP
-    g_ctrls.push_back({ cx, y, cx + cw, y + 26 });
-    y += 34;
-    // Тумблер 2: Blue Box
-    g_ctrls.push_back({ cx, y, cx + cw, y + 26 });
-}
-
 void DrawUI(HDC dc) {
     RECT cr; GetClientRect(g_wnd, &cr);
     fillRect(dc, cr, P::BG);
@@ -242,7 +172,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // TEST MENU");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // render test");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -251,28 +181,19 @@ void DrawUI(HDC dc) {
     DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
 
-    if (g_ctrls.size() >= 2) {
-        // Рисуем Enable ESP
-        RECT r1 = g_ctrls[0];
-        if (PtInRect(&r1, mp)) fillRound(dc, r1, P::ROW_HOV, 4);
-        txt(dc, g_fB, P::TEXT, r1.left + 6, r1.top + 5, "Enable ESP");
-        drawToggle(dc, r1, g_esp.enabled);
-
-        // Рисуем Blue Box
-        RECT r2 = g_ctrls[1];
-        if (PtInRect(&r2, mp)) fillRound(dc, r2, P::ROW_HOV, 4);
-        txt(dc, g_fB, P::TEXT, r2.left + 6, r2.top + 5, "Blue Box");
-        drawToggle(dc, r2, g_esp.blueBox);
-    }
+    if (PtInRect(&g_toggleRect, mp)) fillRound(dc, g_toggleRect, P::ROW_HOV, 4);
+    txt(dc, g_fB, P::TEXT, g_toggleRect.left + 6, g_toggleRect.top + 5, "Show Square");
+    drawToggle(dc, g_toggleRect, g_showSquare);
 }
 
 LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
-            g_fBold = CreateFontA(13, 0,0,0, FW_BOLD,   0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
+            g_fBold = CreateFontA(13, 0,0,0, FW_BOLD, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
             g_fB    = CreateFontA(13, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
             g_fSm   = CreateFontA(11, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            LayoutUI(); return 0;
+            g_toggleRect = { 16, HH + TBH + 16, WW - 32, HH + TBH + 42 };
+            return 0;
         case WM_MOUSEMOVE:
             InvalidateRect(h, NULL, FALSE);
             { TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 }; TrackMouseEvent(&tme); }
@@ -282,12 +203,8 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDOWN: {
             POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             RECT closeR = { WW - 36, 10, WW - 12, 34 };
-            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); FocusGame(); return 0; }
-            
-            if (g_ctrls.size() >= 2) {
-                if (PtInRect(&g_ctrls[0], p)) { g_esp.enabled = !g_esp.enabled; InvalidateRect(h, NULL, FALSE); }
-                if (PtInRect(&g_ctrls[1], p)) { g_esp.blueBox = !g_esp.blueBox; InvalidateRect(h, NULL, FALSE); }
-            }
+            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
+            if (PtInRect(&g_toggleRect, p)) { g_showSquare = !g_showSquare; InvalidateRect(h, NULL, FALSE); }
             return 0;
         }
         case WM_ERASEBKGND: return 1;
@@ -304,15 +221,12 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; ScreenToClient(h, &p);
                 RECT closeR = { WW - 36, 10, WW - 12, 34 };
                 if (PtInRect(&closeR, p)) return HTCLIENT;
-                if (g_ctrls.size() >= 2) {
-                    if (PtInRect(&g_ctrls[0], p)) return HTCLIENT;
-                    if (PtInRect(&g_ctrls[1], p)) return HTCLIENT;
-                }
+                if (PtInRect(&g_toggleRect, p)) return HTCLIENT;
                 return HTCAPTION;
             }
             return hit;
         }
-        case WM_CLOSE: ShowWindow(h, SW_HIDE); FocusGame(); return 0;
+        case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
     }
     return DefWindowProc(h, msg, wp, lp);
 }
@@ -332,7 +246,7 @@ DWORD WINAPI MenuThread(LPVOID) {
     MSG msg;
     while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
         if (msg.message == WM_HOTKEY && msg.wParam == 1) {
-            if (IsWindowVisible(g_wnd)) { ShowWindow(g_wnd, SW_HIDE); FocusGame(); }
+            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
             else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
             continue;
         }
@@ -342,83 +256,15 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   D3D9 Хук (Present)
-// ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-Present_t g_origPresent = nullptr;
-
-HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
-    g_pDevice = pDevice;
-
-    // Сохраняем настройки
-    DWORD oldZ, oldAlpha, oldLighting, oldCull, oldScissor, oldBlendSrc, oldBlendDest;
-    g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
-    g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
-    g_pDevice->GetRenderState(D3DRS_LIGHTING, &oldLighting);
-    g_pDevice->GetRenderState(D3DRS_CULLMODE, &oldCull);
-    g_pDevice->GetRenderState(D3DRS_SCISSORTESTENABLE, &oldScissor);
-    g_pDevice->GetRenderState(D3DRS_SRCBLEND, &oldBlendSrc);
-    g_pDevice->GetRenderState(D3DRS_DESTBLEND, &oldBlendDest);
-
-    // Ставим свои
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
-    // Рисуем
-    DrawESP();
-
-    // Возвращаем
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
-    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
-    g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
-    g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
-    g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, oldScissor);
-    g_pDevice->SetRenderState(D3DRS_SRCBLEND, oldBlendSrc);
-    g_pDevice->SetRenderState(D3DRS_DESTBLEND, oldBlendDest);
-
-    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
-}
-
-void HookD3D9() {
-    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!pD3D) return;
-    D3DPRESENT_PARAMETERS d3dpp = { 0 };
-    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-    IDirect3DDevice9* pDevice = nullptr;
-    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
-    if (pDevice) {
-        void** vTable = *(void***)pDevice;
-        g_origPresent = (Present_t)vTable[17];
-        DWORD old;
-        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[17] = (void*)hkPresent;
-        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-        pDevice->Release();
-    }
-    pD3D->Release();
-    DestroyWindow(hwnd);
-}
-
-// ═══════════════════════════════════════════
 //   Init + DllMain
 // ═══════════════════════════════════════════
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
-    HMODULE cli = GetModuleHandleA("client.dll");
-    if (!eng || !cli) return false;
+    if (!eng) return false;
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
-    auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifE || !cifC) return false;
-    g_engine     = cifE("VEngineClient011", nullptr);
-    g_entityList = cifC("VClientEntityList003", nullptr);
-    return g_engine && g_entityList;
+    if (!cifE) return false;
+    g_engine = cifE("VEngineClient011", nullptr);
+    return g_engine != nullptr;
 }
 
 DWORD WINAPI InitThread(LPVOID) {
