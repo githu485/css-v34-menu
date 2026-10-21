@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + OFFSET SCANNER
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + CLEAN OFFSET SCANNER
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <sstream>
+#include <fstream>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -43,8 +44,6 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENGINE_SCREENSIZE     5
 #define VT_ENGINE_W2SMATRIX     37
 #define VT_ENGINE_ISINGAME      26
-
-// Жесткие индексы для Source 2007
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
@@ -112,54 +111,77 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   OFFSET SCANNER DIAGNOSTICS (F10)
+//   CLEAN OFFSET SCANNER (F10)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS OFFSET SCANNER ===\n\n";
+    ss << "=== COMMANDVS OFFSETS ===\n\n";
     
     int lp = Engine_LocalPlayer();
-    ss << "LocalPlayer Index: " << lp << "\n";
-    
     void* lpE = Entity_Get(lp);
-    if (!lpE) {
-        ss << "LocalPlayer Entity is NULL!\n";
-        return ss.str();
-    }
+    if (!lpE) return "LocalPlayer is NULL!\n";
     
-    ss << "LocalPlayer Address: " << lpE << "\n";
-    ss << "Scanning memory for Health (100) and Origin (XYZ)...\n\n";
-
     uintptr_t base = (uintptr_t)lpE;
+    ss << "Base Address: 0x" << std::hex << base << "\n\n";
 
-    // 1. Ищем здоровье (число 100)
-    ss << "--- CANDIDATES FOR HEALTH (Value = 100) ---\n";
-    for (uintptr_t offset = 0x00; offset < 0x2000; offset += 4) {
-        int val = *(int*)(base + offset);
+    // 1. Сканируем здоровье (ищем целое число 100)
+    ss << "[ HEALTH OFFSET ]\n";
+    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
+        int val = *(int*)(base + off);
         if (val == 100) {
-            ss << "Offset 0x" << std::hex << offset << " -> 100\n";
+            ss << "0x" << std::hex << off << " -> Health (100)\n";
         }
     }
     ss << "\n";
 
-    // 2. Ищем координаты (Origin)
-    // Координаты в Source - это 3 float подряд (X, Y, Z).
-    ss << "--- CANDIDATES FOR ORIGIN (XYZ Floats) ---\n";
-    for (uintptr_t offset = 0x00; offset < 0x2000; offset += 4) {
-        float x = *(float*)(base + offset);
-        float y = *(float*)(base + offset + 4);
-        float z = *(float*)(base + offset + 8);
-
-        if (x > -10000 && x < 10000 && x != 0.0f &&
-            y > -10000 && y < 10000 && y != 0.0f &&
-            z > -10000 && z < 10000 && z != 0.0f) {
-            
-            // Проверка, чтобы отсеять мелкие числа (углы обзора и т.д.)
-            if (fabsf(x) > 10.0f || fabsf(y) > 10.0f || fabsf(z) > 10.0f) {
-                ss << "Offset 0x" << std::hex << offset << " -> X:" << std::dec << x << " Y:" << y << " Z:" << z << "\n";
+    // 2. Сканируем команду (2 = T, 3 = CT)
+    ss << "[ TEAM OFFSET ]\n";
+    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
+        int val = *(int*)(base + off);
+        if (val == 2 || val == 3) {
+            // Проверяем соседние байты, чтобы отсеять мусор (команда обычно окружена нулями)
+            int next = *(int*)(base + off + 4);
+            if (next == 0) {
+                ss << "0x" << std::hex << off << " -> Team (" << std::dec << val << ")\n";
             }
         }
     }
+    ss << "\n";
+
+    // 3. Сканируем координаты (X, Y, Z)
+    ss << "[ ORIGIN OFFSET (XYZ) ]\n";
+    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
+        float x = *(float*)(base + off);
+        float y = *(float*)(base + off + 4);
+        float z = *(float*)(base + off + 8);
+
+        // X и Y должны быть большими (карта), Z маленьким (высота)
+        if (fabsf(x) > 100.0f && fabsf(x) < 10000.0f &&
+            fabsf(y) > 100.0f && fabsf(y) < 10000.0f &&
+            fabsf(z) > 0.1f && fabsf(z) < 500.0f) {
+            ss << "0x" << std::hex << off << " -> Origin (X:" << std::dec << x << " Y:" << y << " Z:" << z << ")\n";
+        }
+    }
+    ss << "\n";
+
+    // 3. Сканируем указатель на матрицу костей (BoneMatrix)
+    // Это всегда указатель в кучу игры (обычно > 0x10000000)
+    ss << "[ BONEMATRIX OFFSET (Pointer) ]\n";
+    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
+        uintptr_t ptr = *(uintptr_t*)(base + off);
+        if (ptr > 0x10000000 && ptr < 0x7FFFFFFF) {
+            // Проверяем, можно ли прочитать по этому указателю (защита от крашей)
+            __try {
+                float test = *(float*)(ptr); 
+                ss << "0x" << std::hex << off << " -> BoneMatrix Ptr (0x" << ptr << ")\n";
+            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+        }
+    }
+
+    // Сохраняем в файл на диск C
+    std::ofstream out("C:\\commandvs_diag.txt");
+    out << ss.str();
+    out.close();
 
     return ss.str();
 }
@@ -182,7 +204,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // OFFSET SCANNER (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // CLEAN OFFSETS (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -393,7 +415,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offset scanner");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for clean offsets");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
