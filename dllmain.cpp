@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 RENDER TEST (Present + EndScene)
+// commandvs.cpp — css v34 (VEngineClient011) RENDER DEBUG TRAPS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -13,7 +13,7 @@
 #pragma comment(lib, "d3d9.lib")
 
 // ═══════════════════════════════════════════
-//   Interfaces & Globals
+//   Globals
 // ═══════════════════════════════════════════
 typedef void* (*CreateInterfaceFn)(const char*, int*);
 void* g_engine = nullptr;
@@ -76,6 +76,12 @@ typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT
 Present_t g_origPresent = nullptr;
 
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
+    static bool firstTime = true;
+    if (firstTime) {
+        firstTime = false;
+        MessageBoxA(NULL, "Present Hook Fired!", "DEBUG SUCCESS", MB_OK);
+    }
+
     g_pDevice = pDevice;
     RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный слева
     return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
@@ -85,6 +91,12 @@ typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
 EndScene_t g_origEndScene = nullptr;
 
 HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
+    static bool firstTime = true;
+    if (firstTime) {
+        firstTime = false;
+        MessageBoxA(NULL, "EndScene Hook Fired!", "DEBUG SUCCESS", MB_OK);
+    }
+
     g_pDevice = pDevice;
     RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий справа
     return g_origEndScene(pDevice);
@@ -93,36 +105,56 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
 void HookD3D9() {
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!pD3D) return;
+    if (!pD3D) {
+        MessageBoxA(NULL, "Direct3DCreate9 failed!", "DEBUG ERROR", MB_OK);
+        return;
+    }
     
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
     d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
     
     IDirect3DDevice9* pDevice = nullptr;
-    // Используем HAL для получения настоящего vtable
+    // Сначала пробуем HAL (аппаратное ускорение)
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
-    if (pDevice) {
-        void** vTable = *(void***)pDevice;
-        DWORD old;
+    if (FAILED(hr) || !pDevice) {
+        char err[256];
+        sprintf(err, "CreateDevice HAL failed! HRESULT: 0x%08X. Trying NULLREF...", hr);
+        MessageBoxA(NULL, err, "DEBUG WARNING", MB_OK);
         
-        // Хук Present (17)
-        g_origPresent = (Present_t)vTable[17];
-        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[17] = (void*)hkPresent;
-        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-        
-        // Хук EndScene (42)
-        g_origEndScene = (EndScene_t)vTable[42];
-        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[42] = (void*)hkEndScene;
-        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
-        
-        pDevice->Release();
+        // Если HAL не сработал, пробуем NULLREF
+        hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+        if (FAILED(hr) || !pDevice) {
+            MessageBoxA(NULL, "CreateDevice NULLREF failed too! Cannot hook.", "DEBUG ERROR", MB_OK);
+            pD3D->Release();
+            DestroyWindow(hwnd);
+            return;
+        }
     }
+    
+    MessageBoxA(NULL, "Device Created! Hooking VTable...", "DEBUG STEP", MB_OK);
+
+    void** vTable = *(void***)pDevice;
+    DWORD old;
+    
+    // Хук Present (17)
+    g_origPresent = (Present_t)vTable[17];
+    VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    vTable[17] = (void*)hkPresent;
+    VirtualProtect(&vTable[17], sizeof(void*), old, &old);
+    
+    // Хук EndScene (42)
+    g_origEndScene = (EndScene_t)vTable[42];
+    VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+    vTable[42] = (void*)hkEndScene;
+    VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+    
+    pDevice->Release();
     pD3D->Release();
     DestroyWindow(hwnd);
+
+    MessageBoxA(NULL, "Hooks Installed Successfully!", "DEBUG SUCCESS", MB_OK);
 }
 
 // ═══════════════════════════════════════════
@@ -269,7 +301,11 @@ bool Init() {
 
 DWORD WINAPI InitThread(LPVOID) {
     Sleep(2000); 
-    if (Init()) HookD3D9(); 
+    if (Init()) {
+        HookD3D9(); 
+    } else {
+        MessageBoxA(NULL, "Engine init failed!", "DEBUG ERROR", MB_OK);
+    }
     return 0;
 }
 
