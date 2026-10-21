@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + F10 DIAGNOSTICS
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + F10 DIAGNOSTICS + FOCUS FIX
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -48,7 +48,7 @@ template<typename T> T vf(void* inst, int idx) {
 
 namespace Off {
     constexpr uintptr_t Health    = 0xFC;   
-    constexpr uintptr_t Team      = 0x98;   // 2 = T, 3 = CT
+    constexpr uintptr_t Team      = 0x98;   
     constexpr uintptr_t Origin    = 0x128;  
     constexpr uintptr_t BoneMat   = 0x4E4;  
 }
@@ -97,7 +97,21 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 }
 
 // ═══════════════════════════════════════════
-//   Diagnostic Window (F10)
+//   Фокус и Мышка
+// ═══════════════════════════════════════════
+HWND g_gameWindow = nullptr;
+
+void FocusGame() {
+    if (!g_gameWindow) g_gameWindow = FindWindowA("Valve001", NULL);
+    if (g_gameWindow) {
+        SetForegroundWindow(g_gameWindow);
+        // Сбрасываем захват мыши, если игра его поставила
+        ClipCursor(NULL); 
+    }
+}
+
+// ═══════════════════════════════════════════
+//   Diagnostic Window (F10 Toggle)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
@@ -116,9 +130,8 @@ std::string GenerateDiagnostics() {
         if (!e || !IsPlayerEntity(e)) continue;
 
         int team = Ent_Team(e);
-        if (team != 2 && team != 3) continue; // 2 = T, 3 = CT
+        if (team != 2 && team != 3) continue;
         
-        // Ограничим вывод, чтобы не спамить слишком сильно
         if (team == 2 && tCount >= 3) continue;
         if (team == 3 && ctCount >= 3) continue;
         if (team == 2) tCount++;
@@ -154,35 +167,49 @@ std::string GenerateDiagnostics() {
     return ss.str();
 }
 
-void OpenDiagWindow() {
-    static HWND diagWnd = nullptr;
-    if (IsWindow(diagWnd)) { DestroyWindow(diagWnd); }
+static HWND g_diagWnd = nullptr;
 
-    WNDCLASSEXA wc = { sizeof(wc) };
-    wc.lpfnWndProc = DefWindowProcA;
-    wc.hInstance = GetModuleHandleA(NULL);
-    wc.lpszClassName = "CommandvsDiag";
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
-    RegisterClassExA(&wc);
+void ToggleDiagWindow() {
+    if (IsWindow(g_diagWnd) && IsWindowVisible(g_diagWnd)) {
+        ShowWindow(g_diagWnd, SW_HIDE);
+        FocusGame(); // Возвращаем фокус игре
+        return;
+    }
 
-    diagWnd = CreateWindowExA(
-        WS_EX_TOPMOST, "CommandvsDiag", "commandvs // Offset Diagnostics (F10)",
-        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-        CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
-        NULL, NULL, wc.hInstance, NULL
-    );
-    if (!diagWnd) return;
+    if (!IsWindow(g_diagWnd)) {
+        WNDCLASSEXA wc = { sizeof(wc) };
+        wc.lpfnWndProc = DefWindowProcA;
+        wc.hInstance = GetModuleHandleA(NULL);
+        wc.lpszClassName = "CommandvsDiag";
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+        RegisterClassExA(&wc);
 
-    std::string text = GenerateDiagnostics();
-    HWND edit = CreateWindowExA(
-        0, "EDIT", text.c_str(),
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
-        10, 10, 560, 440,
-        diagWnd, NULL, wc.hInstance, NULL
-    );
+        g_diagWnd = CreateWindowExA(
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // Offset Diagnostics (F10 to close)",
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
+            NULL, NULL, wc.hInstance, NULL
+        );
+    }
 
-    HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
-    SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if (g_diagWnd) {
+        std::string text = GenerateDiagnostics();
+        HWND edit = FindWindowExA(g_diagWnd, NULL, "EDIT", NULL);
+        if (edit) {
+            SetWindowTextA(edit, text.c_str());
+        } else {
+            edit = CreateWindowExA(
+                0, "EDIT", text.c_str(),
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
+                10, 10, 560, 440, g_diagWnd, NULL, GetModuleHandleA(NULL), NULL
+            );
+            HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
+            SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        }
+
+        ShowWindow(g_diagWnd, SW_SHOW);
+        SetForegroundWindow(g_diagWnd); // Фокус на окно
+    }
 }
 
 // ═══════════════════════════════════════════
@@ -235,7 +262,7 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); // Индикатор хука
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
 
     if (!Engine_InGame()) return;
     int lp = Engine_LocalPlayer();
@@ -411,7 +438,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDOWN: {
             POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             RECT closeR = { WW - 36, 10, WW - 12, 34 };
-            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
+            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); FocusGame(); return 0; }
             for (auto& c : g_ctrls) {
                 if (!PtInRect(&c.r, p)) continue;
                 if (c.type == CTRL_TOGGLE) { *(bool*)c.data = !*(bool*)c.data; InvalidateRect(h, NULL, FALSE); }
@@ -438,7 +465,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return hit;
         }
-        case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
+        case WM_CLOSE: ShowWindow(h, SW_HIDE); FocusGame(); return 0;
     }
     return DefWindowProc(h, msg, wp, lp);
 }
@@ -454,7 +481,7 @@ DWORD WINAPI MenuThread(LPVOID) {
     HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
     
     RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    RegisterHotKey(g_wnd, 2, MOD_NOREPEAT, VK_F10); // Хоткей для диагностики
+    RegisterHotKey(g_wnd, 2, MOD_NOREPEAT, VK_F10);
     
     ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
 
@@ -462,10 +489,10 @@ DWORD WINAPI MenuThread(LPVOID) {
     while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
         if (msg.message == WM_HOTKEY) {
             if (msg.wParam == 1) {
-                if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
+                if (IsWindowVisible(g_wnd)) { ShowWindow(g_wnd, SW_HIDE); FocusGame(); }
                 else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
             } else if (msg.wParam == 2) {
-                OpenDiagWindow();
+                ToggleDiagWindow();
             }
             continue;
         }
