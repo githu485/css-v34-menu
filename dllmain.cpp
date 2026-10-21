@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + F10 DIAGNOSTICS + FOCUS FIX
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + RAW DIAGNOSTICS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -105,65 +105,64 @@ void FocusGame() {
     if (!g_gameWindow) g_gameWindow = FindWindowA("Valve001", NULL);
     if (g_gameWindow) {
         SetForegroundWindow(g_gameWindow);
-        // Сбрасываем захват мыши, если игра его поставила
         ClipCursor(NULL); 
     }
 }
 
 // ═══════════════════════════════════════════
-//   Diagnostic Window (F10 Toggle)
+//   RAW Diagnostic Window (F10 Toggle)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS DIAGNOSTICS ===\n\n";
+    ss << "=== COMMANDVS RAW DIAGNOSTICS ===\n\n";
     ss << "Engine: VEngineClient011\n";
     
     int lp = Engine_LocalPlayer();
-    ss << "LocalPlayer Index: " << lp << "\n\n";
+    ss << "LocalPlayer Index: " << lp << "\n";
     
     int hi = Entity_Highest();
-    int tCount = 0, ctCount = 0;
+    ss << "Highest Entity Index (hi): " << hi << "\n\n";
+
+    int foundPlayers = 0;
 
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
-        if (!e || !IsPlayerEntity(e)) continue;
+        if (!e) continue;
 
-        int team = Ent_Team(e);
-        if (team != 2 && team != 3) continue;
-        
-        if (team == 2 && tCount >= 3) continue;
-        if (team == 3 && ctCount >= 3) continue;
-        if (team == 2) tCount++;
-        if (team == 3) ctCount++;
-
-        ss << "--- " << (team == 2 ? "TERRORIST" : "COUNTER-TERRORIST") << " (Index " << i << ") ---\n";
-        
-        int hp = Ent_Health(e);
-        ss << "Health [0xFC]: " << hp << (hp > 0 && hp <= 100 ? " (WORKING)" : " (WRONG OFFSET!)") << "\n";
-
-        Vector origin = Ent_Origin(e);
-        ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n";
-
-        matrix3x4_t* bones = Ent_Bones(e);
-        ss << "BoneMatrix [0x4E4]: " << bones << "\n";
-        
-        if (bones) {
-            Vector head = BonePos(bones, 8);
-            ss << "Head Bone (8): X:" << head.x << " Y:" << head.y << " Z:" << head.z << "\n";
-            Vector foot = BonePos(bones, 0);
-            ss << "Foot Bone (0): X:" << foot.x << " Y:" << foot.y << " Z:" << foot.z << "\n";
-        } else {
-            ss << "BoneMatrix is NULL! (Offset 0x4E4 is WRONG)\n";
+        // Получаем имя класса (C_CSPlayer, CBaseAnimating, weapon_ak47 и т.д.)
+        typedef void* (__thiscall* GetClientClassFn)(void*);
+        void* cc = vf<GetClientClassFn>(e, 2)(e);
+        const char* className = "Unknown";
+        if (cc) {
+            const char* namePtr = *(const char**)((uintptr_t)cc + 0x8);
+            if (namePtr) className = namePtr;
         }
 
-        Vector sH, sF;
-        if (WorldToScreen(origin, sH)) {
-            ss << "W2S Origin: X:" << sH.x << " Y:" << sH.y << "\n";
+        // Выводим только игроков, чтобы не спамить
+        std::string cName = className;
+        if (cName.find("Player") != std::string::npos || cName.find("player") != std::string::npos) {
+            foundPlayers++;
+            ss << "--- ENTITY " << i << ": " << className << " ---\n";
+            
+            int hp = *(int*)((uintptr_t)e + 0xFC);
+            int team = *(int*)((uintptr_t)e + 0x98);
+            ss << "HP [0xFC]: " << hp << "\n";
+            ss << "Team [0x98]: " << team << " (2=T, 3=CT, 1=Spec)\n";
+            
+            uintptr_t bonePtr = *(uintptr_t*)((uintptr_t)e + 0x4E4);
+            ss << "BoneMatrix [0x4E4]: " << (void*)bonePtr << "\n";
+            
+            Vector origin = *(Vector*)((uintptr_t)e + 0x128);
+            ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n\n";
         }
-        
-        ss << "--------------------------------------\n\n";
     }
+    
+    if (foundPlayers == 0) {
+        ss << "!!! NO PLAYERS FOUND IN MEMORY !!!\n";
+        ss << "Make sure you added bots (type 'bot_add' in console).\n";
+    }
+
     return ss.str();
 }
 
@@ -185,7 +184,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // Offset Diagnostics (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // RAW Diagnostics (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -208,7 +207,7 @@ void ToggleDiagWindow() {
         }
 
         ShowWindow(g_diagWnd, SW_SHOW);
-        SetForegroundWindow(g_diagWnd); // Фокус на окно
+        SetForegroundWindow(g_diagWnd);
     }
 }
 
@@ -396,7 +395,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offsets diag");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for raw diag");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
