@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) dx9 esp FIXED THREADS
+// commandvs.cpp — css v34 (VEngineClient011) dx9 esp + F10 DIAGNOSTICS
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <sstream>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -47,6 +48,7 @@ template<typename T> T vf(void* inst, int idx) {
 
 namespace Off {
     constexpr uintptr_t Health    = 0xFC;   
+    constexpr uintptr_t Team      = 0x98;   // 2 = T, 3 = CT
     constexpr uintptr_t Origin    = 0x128;  
     constexpr uintptr_t BoneMat   = 0x4E4;  
 }
@@ -69,6 +71,7 @@ bool IsPlayerEntity(void* ent) {
 }
 
 int  Ent_Health(void* e) { return *(int*)((uintptr_t)e + Off::Health); }
+int  Ent_Team(void* e)   { return *(int*)((uintptr_t)e + Off::Team); }
 Vector Ent_Origin(void* e) { return *(Vector*)((uintptr_t)e + Off::Origin); }
 matrix3x4_t* Ent_Bones(void* e) {
     uintptr_t p = *(uintptr_t*)((uintptr_t)e + Off::BoneMat);
@@ -91,6 +94,95 @@ bool WorldToScreen(const Vector& w, Vector& out) {
     out.x = (sw * 0.5f) + (sx * sw) * 0.5f;
     out.y = (sh * 0.5f) - (sy * sh) * 0.5f;
     return true;
+}
+
+// ═══════════════════════════════════════════
+//   Diagnostic Window (F10)
+// ═══════════════════════════════════════════
+std::string GenerateDiagnostics() {
+    std::stringstream ss;
+    ss << "=== COMMANDVS DIAGNOSTICS ===\n\n";
+    ss << "Engine: VEngineClient011\n";
+    
+    int lp = Engine_LocalPlayer();
+    ss << "LocalPlayer Index: " << lp << "\n\n";
+    
+    int hi = Entity_Highest();
+    int tCount = 0, ctCount = 0;
+
+    for (int i = 1; i <= hi; i++) {
+        if (i == lp) continue;
+        void* e = Entity_Get(i);
+        if (!e || !IsPlayerEntity(e)) continue;
+
+        int team = Ent_Team(e);
+        if (team != 2 && team != 3) continue; // 2 = T, 3 = CT
+        
+        // Ограничим вывод, чтобы не спамить слишком сильно
+        if (team == 2 && tCount >= 3) continue;
+        if (team == 3 && ctCount >= 3) continue;
+        if (team == 2) tCount++;
+        if (team == 3) ctCount++;
+
+        ss << "--- " << (team == 2 ? "TERRORIST" : "COUNTER-TERRORIST") << " (Index " << i << ") ---\n";
+        
+        int hp = Ent_Health(e);
+        ss << "Health [0xFC]: " << hp << (hp > 0 && hp <= 100 ? " (WORKING)" : " (WRONG OFFSET!)") << "\n";
+
+        Vector origin = Ent_Origin(e);
+        ss << "Origin [0x128]: X:" << origin.x << " Y:" << origin.y << " Z:" << origin.z << "\n";
+
+        matrix3x4_t* bones = Ent_Bones(e);
+        ss << "BoneMatrix [0x4E4]: " << bones << "\n";
+        
+        if (bones) {
+            Vector head = BonePos(bones, 8);
+            ss << "Head Bone (8): X:" << head.x << " Y:" << head.y << " Z:" << head.z << "\n";
+            Vector foot = BonePos(bones, 0);
+            ss << "Foot Bone (0): X:" << foot.x << " Y:" << foot.y << " Z:" << foot.z << "\n";
+        } else {
+            ss << "BoneMatrix is NULL! (Offset 0x4E4 is WRONG)\n";
+        }
+
+        Vector sH, sF;
+        if (WorldToScreen(origin, sH)) {
+            ss << "W2S Origin: X:" << sH.x << " Y:" << sH.y << "\n";
+        }
+        
+        ss << "--------------------------------------\n\n";
+    }
+    return ss.str();
+}
+
+void OpenDiagWindow() {
+    static HWND diagWnd = nullptr;
+    if (IsWindow(diagWnd)) { DestroyWindow(diagWnd); }
+
+    WNDCLASSEXA wc = { sizeof(wc) };
+    wc.lpfnWndProc = DefWindowProcA;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.lpszClassName = "CommandvsDiag";
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+    RegisterClassExA(&wc);
+
+    diagWnd = CreateWindowExA(
+        WS_EX_TOPMOST, "CommandvsDiag", "commandvs // Offset Diagnostics (F10)",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
+        NULL, NULL, wc.hInstance, NULL
+    );
+    if (!diagWnd) return;
+
+    std::string text = GenerateDiagnostics();
+    HWND edit = CreateWindowExA(
+        0, "EDIT", text.c_str(),
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
+        10, 10, 560, 440,
+        diagWnd, NULL, wc.hInstance, NULL
+    );
+
+    HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
+    SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
 
 // ═══════════════════════════════════════════
@@ -120,7 +212,7 @@ void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color
 }
 
 // ═══════════════════════════════════════════
-//   ESP Логика (С ДЕБАГ-КВАДРАТАМИ)
+//   ESP Логика
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
@@ -143,21 +235,11 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // 1. КРАСНЫЙ: Хук D3D9 работает
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0));
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); // Индикатор хука
 
     if (!Engine_InGame()) return;
-    // 2. ЗЕЛЕНЫЙ: Мы на карте
-    DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0));
-
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
-    // 3. СИНИЙ: Локальный игрок найден
-    DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255));
-
-    int validHealthCount = 0;
-    int validBoneCount = 0;
-    int validW2SCount = 0;
 
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
@@ -167,41 +249,27 @@ void DrawESP() {
 
         int hp = Ent_Health(e);
         if (hp > 0 && hp <= 100) {
-            validHealthCount++;
-            
+            Vector feet = Ent_Origin(e);
             matrix3x4_t* b = Ent_Bones(e);
-            if (b) {
-                Vector head = BonePos(b, 8);
-                Vector feet = Ent_Origin(e);
+            if (!b) continue;
+            
+            Vector head = BonePos(b, 8);
+            if (head.Length() < 0.1f) head = feet + Vector(0, 0, 72);
 
-                if (head.x != 0.0f && head.z != 0.0f && fabsf(head.x) < 10000.0f) {
-                    validBoneCount++;
+            Vector sH, sF;
+            if (!WorldToScreen(head, sH) || !WorldToScreen(feet, sF)) continue;
+            
+            float h = sF.y - sH.y;
+            if (h > 4 && h < 1800) {
+                float w = h * 0.42f;
+                float x0 = sH.x - w * 0.5f;
+                float y0 = sH.y;
 
-                    Vector sH, sF;
-                    if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-                        validW2SCount++;
-                        
-                        float h = sF.y - sH.y;
-                        if (h > 4 && h < 1800) {
-                            float w = h * 0.42f;
-                            float x0 = sH.x - w * 0.5f;
-                            float y0 = sH.y;
-
-                            DrawRect(x0, y0, w, h, g_esp.fillColor);
-                            if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
-                        }
-                    }
-                }
+                DrawRect(x0, y0, w, h, g_esp.fillColor);
+                if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
             }
         }
     }
-
-    // 4. БЕЛЫЙ: Найдены игроки по HP
-    if (validHealthCount > 0) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
-    // 5. ЖЕЛТЫЙ: Прочитана матрица костей
-    if (validBoneCount > 0) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0));
-    // 6. ФИОЛЕТОВЫЙ: Сработал WorldToScreen
-    if (validW2SCount > 0) DrawRect(160, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255));
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
@@ -301,7 +369,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // fixed threads");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offsets diag");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -384,14 +452,21 @@ DWORD WINAPI MenuThread(LPVOID) {
         (GetSystemMetrics(SM_CXSCREEN) - WW) / 2, (GetSystemMetrics(SM_CYSCREEN) - WH) / 2, WW, WH, NULL, NULL, wc.hInstance, NULL);
     if (!g_wnd) return 1;
     HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
+    
     RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
+    RegisterHotKey(g_wnd, 2, MOD_NOREPEAT, VK_F10); // Хоткей для диагностики
+    
     ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
 
     MSG msg;
     while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
-            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
-            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
+        if (msg.message == WM_HOTKEY) {
+            if (msg.wParam == 1) {
+                if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
+                else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
+            } else if (msg.wParam == 2) {
+                OpenDiagWindow();
+            }
             continue;
         }
         TranslateMessage(&msg); DispatchMessageA(&msg);
@@ -445,7 +520,7 @@ void HookD3D9() {
 }
 
 // ═══════════════════════════════════════════
-//   Init + DllMain (ФИКС ЗАВИСАНИЯ)
+//   Init + DllMain
 // ═══════════════════════════════════════════
 bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
@@ -462,9 +537,8 @@ bool Init() {
     return g_engine && g_entityList;
 }
 
-// ВЫНОСИМ SLEEP И ХУК В ОТДЕЛЬНЫЙ ПОТОК
 DWORD WINAPI InitThread(LPVOID) {
-    Sleep(2000); // Теперь это безопасно, мы не блокируем DllMain
+    Sleep(2000); 
     if (Init()) {
         HookD3D9(); 
     }
@@ -474,8 +548,6 @@ DWORD WINAPI InitThread(LPVOID) {
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
-        
-        // Мгновенно возвращаем управление инжектору
         CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
     }
