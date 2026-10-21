@@ -139,7 +139,6 @@ std::string GenerateDiagnostics() {
     for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
         int val = *(int*)(base + off);
         if (val == 2 || val == 3) {
-            // Проверяем соседние байты, чтобы отсеять мусор (команда обычно окружена нулями)
             int next = *(int*)(base + off + 4);
             if (next == 0) {
                 ss << "0x" << std::hex << off << " -> Team (" << std::dec << val << ")\n";
@@ -155,7 +154,6 @@ std::string GenerateDiagnostics() {
         float y = *(float*)(base + off + 4);
         float z = *(float*)(base + off + 8);
 
-        // X и Y должны быть большими (карта), Z маленьким (высота)
         if (fabsf(x) > 100.0f && fabsf(x) < 10000.0f &&
             fabsf(y) > 100.0f && fabsf(y) < 10000.0f &&
             fabsf(z) > 0.1f && fabsf(z) < 500.0f) {
@@ -164,21 +162,21 @@ std::string GenerateDiagnostics() {
     }
     ss << "\n";
 
-    // 3. Сканируем указатель на матрицу костей (BoneMatrix)
-    // Это всегда указатель в кучу игры (обычно > 0x10000000)
+    // 4. Сканируем указатель на матрицу костей (BoneMatrix)
     ss << "[ BONEMATRIX OFFSET (Pointer) ]\n";
     for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
         uintptr_t ptr = *(uintptr_t*)(base + off);
         if (ptr > 0x10000000 && ptr < 0x7FFFFFFF) {
-            // Проверяем, можно ли прочитать по этому указателю (защита от крашей)
-            __try {
-                float test = *(float*)(ptr); 
-                ss << "0x" << std::hex << off << " -> BoneMatrix Ptr (0x" << ptr << ")\n";
-            } __except(EXCEPTION_EXECUTE_HANDLER) {}
+            // Используем VirtualQuery вместо __try/__except (чтобы MinGW не ругался)
+            MEMORY_BASIC_INFORMATION mbi;
+            if (VirtualQuery((LPCVOID)ptr, &mbi, sizeof(mbi))) {
+                if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))) {
+                    ss << "0x" << std::hex << off << " -> BoneMatrix Ptr (0x" << ptr << ")\n";
+                }
+            }
         }
     }
 
-    // Сохраняем в файл на диск C
     std::ofstream out("C:\\commandvs_diag.txt");
     out << ss.str();
     out.close();
