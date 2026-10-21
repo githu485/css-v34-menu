@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL DEBUG + SAFE LOG
+// commandvs.cpp — css v34 (VEngineClient011) W2S SCANNER
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -41,7 +41,6 @@ template<typename T> T vf(void* inst, int idx) {
 
 #define VT_ENGINE_LOCALPLAYER   12
 #define VT_ENGINE_SCREENSIZE     5
-#define VT_ENGINE_W2SMATRIX     37
 #define VT_ENGINE_ISINGAME      26
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
@@ -72,7 +71,6 @@ bool SafeRead(uintptr_t addr, T& out) {
 
 int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
 void Engine_ScreenSize(int& w, int& h){ typedef void(__thiscall* F)(void*,int&,int&); vf<F>(g_engine, VT_ENGINE_SCREENSIZE)(g_engine,w,h); }
-VMatrix* Engine_W2SM()                { typedef VMatrix*(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_W2SMATRIX)(g_engine); }
 bool Engine_InGame()                  { typedef bool(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_ISINGAME)(g_engine); }
 
 void* Entity_Get(int i)               { typedef void*(__thiscall* F)(void*,int); return vf<F>(g_entityList, VT_ENTITY_GET)(g_entityList, i); }
@@ -93,35 +91,6 @@ bool IsPlayerEntitySafe(void* ent) {
 
 int  Ent_Health(void* e) { int hp = 0; SafeRead((uintptr_t)e + Off::Health, hp); return hp; }
 Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
-matrix3x4_t* Ent_Bones(void* e) {
-    uintptr_t p = 0;
-    SafeRead((uintptr_t)e + Off::BoneMat, p);
-    return p ? (matrix3x4_t*)p : nullptr;
-}
-Vector BonePos(matrix3x4_t* b, int i) {
-    if (!b) return {};
-    Vector out;
-    if (SafeRead((uintptr_t)&b[i].m[0][3], out.x) &&
-        SafeRead((uintptr_t)&b[i].m[1][3], out.y) &&
-        SafeRead((uintptr_t)&b[i].m[2][3], out.z)) {
-        return out;
-    }
-    return {};
-}
-
-bool WorldToScreen(const Vector& w, Vector& out) {
-    VMatrix* m = Engine_W2SM();
-    if (!m) return false;
-    float cw = (*m)[3][0]*w.x + (*m)[3][1]*w.y + (*m)[3][2]*w.z + (*m)[3][3];
-    if (cw < 0.001f) return false;
-    float iw = 1.0f / cw;
-    float sx = ((*m)[0][0]*w.x + (*m)[0][1]*w.y + (*m)[0][2]*w.z + (*m)[0][3]) * iw;
-    float sy = ((*m)[1][0]*w.x + (*m)[1][1]*w.y + (*m)[1][2]*w.z + (*m)[1][3]) * iw;
-    int sw, sh; Engine_ScreenSize(sw, sh);
-    out.x = (sw * 0.5f) + (sx * sw) * 0.5f;
-    out.y = (sh * 0.5f) - (sy * sh) * 0.5f;
-    return true;
-}
 
 // ═══════════════════════════════════════════
 //   Фокус и Мышка
@@ -137,55 +106,65 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   DEBUG LOG WINDOW (F10)
+//   W2S INDEX SCANNER (F10)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS DEBUG LOG ===\r\n\r\n";
+    ss << "=== COMMANDVS W2S SCANNER ===\r\n\r\n";
     
-    if (!g_engine) { ss << "[!] Engine is NULL\r\n"; return ss.str(); }
-    if (!g_entityList) { ss << "[!] EntityList is NULL\r\n"; return ss.str(); }
-    
-    ss << "[+] Hooks: OK\r\n";
-    ss << "[+] InGame: " << (Engine_InGame() ? "True" : "False") << "\r\n";
-
     int lp = Engine_LocalPlayer();
-    ss << "[+] LocalPlayer: " << lp << "\r\n";
-    
-    if (lp <= 0) { ss << "[!] You are not in game!\r\n"; return ss.str(); }
+    if (lp <= 0) return "Not in game!\r\n";
 
+    int sw, sh;
+    Engine_ScreenSize(sw, sh);
+    ss << "Screen Size: " << sw << " x " << sh << "\r\n";
+
+    // Найдем первого попавшегося врага, чтобы на нем тестить матрицу
     int hi = Entity_Highest();
-    ss << "[+] Highest Entity: " << hi << "\r\n\r\n";
-
-    int foundPlayers = 0;
+    void* targetEnt = nullptr;
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
-        if (!e) continue;
-
-        if (IsPlayerEntitySafe(e)) {
-            foundPlayers++;
-            int hp = Ent_Health(e);
-            Vector feet = Ent_Origin(e);
-            Vector head = feet + Vector(0, 0, 72); // Из головы делаем +72 вверх
-
-            Vector sH, sF;
-            bool w2sH = WorldToScreen(head, sH);
-            bool w2sF = WorldToScreen(feet, sF);
-
-            ss << "[-] Player " << i << " (HP: " << hp << ")\r\n";
-            ss << "    Origin: X:" << feet.x << " Y:" << feet.y << " Z:" << feet.z << "\r\n";
-            ss << "    W2S: " << ((w2sH && w2sF) ? "TRUE" : "FALSE") << "\r\n";
-            if (w2sH && w2sF) {
-                ss << "    Screen: Head(" << sH.x << "," << sH.y << ") Feet(" << sF.x << "," << sF.y << ")\r\n";
-            }
-        }
+        if (e && IsPlayerEntitySafe(e)) { targetEnt = e; break; }
     }
 
-    if (foundPlayers == 0) {
-        ss << "\r\n[!] NO PLAYERS FOUND!\r\n";
-        ss << "Check: Did you type 'bot_add' in console?\r\n";
-        ss << "Check: Offsets (0xDA4 / 0x1D4 / 0x4E4) might be wrong for bots.\r\n";
+    if (!targetEnt) return "No target found to test W2S!\r\n";
+
+    Vector feet = Ent_Origin(targetEnt);
+    Vector head = feet + Vector(0, 0, 72);
+    ss << "Target Origin: X:" << feet.x << " Y:" << feet.y << " Z:" << feet.z << "\r\n\r\n";
+
+    ss << "[ TESTING W2S MATRIX INDEXES 30-45 ]\r\n";
+
+    for (int idx = 30; idx <= 45; idx++) {
+        typedef VMatrix*(__thiscall* F)(void*);
+        VMatrix* m = vf<F>(g_engine, idx)(g_engine);
+        
+        if (!m) {
+            ss << "Index " << idx << ": NULL pointer\r\n";
+            continue;
+        }
+
+        // Пробуем перевести координаты головы
+        float cw = (*m)[3][0]*head.x + (*m)[3][1]*head.y + (*m)[3][2]*head.z + (*m)[3][3];
+        
+        if (cw > 0.001f) {
+            float iw = 1.0f / cw;
+            float sx = ((*m)[0][0]*head.x + (*m)[0][1]*head.y + (*m)[0][2]*head.z + (*m)[0][3]) * iw;
+            float sy = ((*m)[1][0]*head.x + (*m)[1][1]*head.y + (*m)[1][2]*head.z + (*m)[1][3]) * iw;
+            
+            float screenX = (sw * 0.5f) + (sx * sw) * 0.5f;
+            float screenY = (sh * 0.5f) - (sy * sh) * 0.5f;
+
+            // Если координаты адекватные
+            if (screenX > -2000 && screenX < 2000 && screenY > -2000 && screenY < 2000) {
+                ss << "-> Index " << idx << ": VALID! (X:" << screenX << " Y:" << screenY << ")\r\n";
+            } else {
+                ss << "Index " << idx << ": out of bounds (X:" << screenX << " Y:" << screenY << ")\r\n";
+            }
+        } else {
+            ss << "Index " << idx << ": behind camera\r\n";
+        }
     }
 
     return ss.str();
@@ -209,7 +188,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // DEBUG LOG (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // W2S SCANNER (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -292,7 +271,16 @@ void DrawESP() {
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
 
+    // Временно используем 37 индекс, чтобы просто рисовать. 
+    // Если боксы будут в углу экрана, мы поменяем этот индекс на тот, что найдем.
+    typedef VMatrix*(__thiscall* F)(void*);
+    VMatrix* m = vf<F>(g_engine, 37)(g_engine);
+    if (!m) return;
+
+    int sw, sh;
+    Engine_ScreenSize(sw, sh);
     int hi = Entity_Highest();
+
     for (int i = 1; i <= hi; i++) {
         if (i == lp) continue;
         void* e = Entity_Get(i);
@@ -301,13 +289,27 @@ void DrawESP() {
         Vector feet = Ent_Origin(e);
         Vector head = feet + Vector(0, 0, 72);
 
-        Vector sH, sF;
-        if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-            float h = sF.y - sH.y;
+        float cwH = (*m)[3][0]*head.x + (*m)[3][1]*head.y + (*m)[3][2]*head.z + (*m)[3][3];
+        float cwF = (*m)[3][0]*feet.x + (*m)[3][1]*feet.y + (*m)[3][2]*feet.z + (*m)[3][3];
+
+        if (cwH > 0.001f && cwF > 0.001f) {
+            float iwH = 1.0f / cwH;
+            float sxH = ((*m)[0][0]*head.x + (*m)[0][1]*head.y + (*m)[0][2]*head.z + (*m)[0][3]) * iwH;
+            float syH = ((*m)[1][0]*head.x + (*m)[1][1]*head.y + (*m)[1][2]*head.z + (*m)[1][3]) * iwH;
+            float sXH = (sw * 0.5f) + (sxH * sw) * 0.5f;
+            float sYH = (sh * 0.5f) - (syH * sh) * 0.5f;
+
+            float iwF = 1.0f / cwF;
+            float sxF = ((*m)[0][0]*feet.x + (*m)[0][1]*feet.y + (*m)[0][2]*feet.z + (*m)[0][3]) * iwF;
+            float syF = ((*m)[1][0]*feet.x + (*m)[1][1]*feet.y + (*m)[1][2]*feet.z + (*m)[1][3]) * iwF;
+            float sXF = (sw * 0.5f) + (sxF * sw) * 0.5f;
+            float sYF = (sh * 0.5f) - (syF * sh) * 0.5f;
+
+            float h = sYF - sYH;
             if (h > 4 && h < 1800) {
                 float w = h * 0.42f;
-                float x0 = sH.x - w * 0.5f;
-                float y0 = sH.y;
+                float x0 = sXH - w * 0.5f;
+                float y0 = sYH;
 
                 DrawRect(x0, y0, w, h, g_esp.fillColor);
                 if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
@@ -413,7 +415,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for debug log");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for W2S scan");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
