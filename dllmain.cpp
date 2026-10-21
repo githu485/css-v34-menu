@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) IAT HOOK (MINgW FIX)
+// commandvs.cpp — css v34 (VEngineClient011) INLINE HOOK
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -7,6 +7,7 @@
 #include <vector>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "msimg32.lib")
@@ -56,13 +57,43 @@ void RenderTest(int offsetX, D3DCOLOR color) {
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
     
-    // Рисуем квадрат 200х200
     DrawRect(sw/2 - 100 + offsetX, sh/2 - 100, 200, 200, color);
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
     g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
+}
+
+// ═══════════════════════════════════════════
+//   Inline Hook Function (Встраиваемый хук)
+// ═══════════════════════════════════════════
+void* HookFunc(void* target, void* detour) {
+    if (!target || !detour) return nullptr;
+    
+    DWORD oldProtect;
+    VirtualProtect(target, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
+    
+    // Выделяем память под "трамплин" (код, который вернет управление в оригинал)
+    void* trampoline = VirtualAlloc(nullptr, 20, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!trampoline) return nullptr;
+    
+    // Копируем оригинальные 5 байт в трамплин
+    memcpy(trampoline, target, 5);
+    
+    // Добавляем JMP (0xE9) обратно в оригинальную функцию (после наших 5 байт)
+    uintptr_t src = (uintptr_t)trampoline + 5;
+    uintptr_t dst = (uintptr_t)target + 5;
+    *(uint8_t*)((uintptr_t)trampoline + 5) = 0xE9;
+    *(uint32_t*)((uintptr_t)trampoline + 6) = (uint32_t)(dst - (src + 5));
+    
+    // Перезаписываем начало функции на JMP в наш детур
+    *(uint8_t*)target = 0xE9;
+    *(uint32_t*)((uintptr_t)target + 1) = (uint32_t)((uintptr_t)detour - ((uintptr_t)target + 5));
+    
+    VirtualProtect(target, 5, oldProtect, &oldProtect);
+    
+    return trampoline; // Возвращаем указатель на оригинал
 }
 
 // ═══════════════════════════════════════════
@@ -79,7 +110,7 @@ HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, 
     }
 
     g_pDevice = pDevice;
-    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный слева
+    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
     return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
 
@@ -94,101 +125,39 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
     }
 
     g_pDevice = pDevice;
-    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий справа
+    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
     return g_origEndScene(pDevice);
 }
 
-// ═══════════════════════════════════════════
-//   IAT Hook for Direct3DCreate9
-// ═══════════════════════════════════════════
-typedef IDirect3D9* (WINAPI* Direct3DCreate9_t)(UINT);
-Direct3DCreate9_t g_origDirect3DCreate9 = nullptr;
-
-typedef HRESULT(__stdcall* CreateDevice_t)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
-CreateDevice_t g_origCreateDevice = nullptr;
-
-// Выносим функцию хука отдельно (MinGW не любит лямбды в vtable)
-HRESULT __stdcall hkCreateDevice(IDirect3D9* _this, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface) {
-    // Вызываем оригинал
-    HRESULT hr = g_origCreateDevice(_this, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
+void HookD3D9() {
+    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
+    IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!pD3D) return;
     
-    // Если девайс успешно создался, хукаем его vtable
-    if (SUCCEEDED(hr) && ppReturnedDeviceInterface && *ppReturnedDeviceInterface) {
-        IDirect3DDevice9* dev = *ppReturnedDeviceInterface;
-        void** vTable = *(void***)dev;
-        DWORD old;
-
-        // Хук Present (17)
-        g_origPresent = (Present_t)vTable[17];
-        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[17] = (void*)hkPresent;
-        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-
-        // Хук EndScene (42)
-        g_origEndScene = (EndScene_t)vTable[42];
-        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[42] = (void*)hkEndScene;
-        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
-    }
-    return hr;
-}
-
-IDirect3D9* WINAPI hkDirect3DCreate9(UINT SDKVersion) {
-    IDirect3D9* pD3D = g_origDirect3DCreate9(SDKVersion);
-    if (pD3D) {
-        // Перехватываем CreateDevice
-        g_origCreateDevice = (CreateDevice_t)(*(void***)pD3D)[16]; // CreateDevice index 16
+    D3DPRESENT_PARAMETERS d3dpp = { 0 };
+    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+    
+    IDirect3DDevice9* pDevice = nullptr;
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    
+    if (pDevice) {
+        void** vTable = *(void***)pDevice;
         
-        DWORD old;
-        VirtualProtect(&(*(void***)pD3D)[16], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        (*(void***)pD3D)[16] = (void*)hkCreateDevice;
-        VirtualProtect(&(*(void***)pD3D)[16], sizeof(void*), old, &old);
+        // Ставим Inline Hook на Present (индекс 17)
+        g_origPresent = (Present_t)HookFunc(vTable[17], (void*)hkPresent);
         
-        MessageBoxA(NULL, "IAT Hooked Direct3DCreate9 & CreateDevice!", "DEBUG SUCCESS", MB_OK);
+        // Ставим Inline Hook на EndScene (индекс 42)
+        g_origEndScene = (EndScene_t)HookFunc(vTable[42], (void*)hkEndScene);
+        
+        pDevice->Release();
+        MessageBoxA(NULL, "Inline Hooks Installed Successfully!", "DEBUG SUCCESS", MB_OK);
+    } else {
+        MessageBoxA(NULL, "CreateDevice failed!", "DEBUG ERROR", MB_OK);
     }
-    return pD3D;
-}
-
-void HookIAT() {
-    // Получаем базовый адрес игры (hl2.exe)
-    uintptr_t base = (uintptr_t)GetModuleHandleA(NULL);
-    if (!base) return;
-
-    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
-    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
-    IMAGE_IMPORT_DESCRIPTOR* imports = (IMAGE_IMPORT_DESCRIPTOR*)(base + nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-
-    // Ищем d3d9.dll в таблице импортов
-    while (imports->Name) {
-        const char* dllName = (const char*)(base + imports->Name);
-        if (_stricmp(dllName, "d3d9.dll") == 0) {
-            IMAGE_THUNK_DATA* thunk = (IMAGE_THUNK_DATA*)(base + imports->FirstThunk);
-            IMAGE_THUNK_DATA* origThunk = (IMAGE_THUNK_DATA*)(base + imports->OriginalFirstThunk);
-
-            while (origThunk->u1.Function) {
-                if (origThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG) {
-                    // Импорт по ординалу
-                } else {
-                    IMAGE_IMPORT_BY_NAME* importName = (IMAGE_IMPORT_BY_NAME*)(base + origThunk->u1.AddressOfData);
-                    if (strcmp((const char*)importName->Name, "Direct3DCreate9") == 0) {
-                        // Нашли функцию! Подменяем.
-                        DWORD oldProtect;
-                        VirtualProtect(&thunk->u1.Function, sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect);
-                        
-                        g_origDirect3DCreate9 = (Direct3DCreate9_t)thunk->u1.Function;
-                        thunk->u1.Function = (uintptr_t)hkDirect3DCreate9;
-                        
-                        VirtualProtect(&thunk->u1.Function, sizeof(void*), oldProtect, &oldProtect);
-                        return;
-                    }
-                }
-                origThunk++;
-                thunk++;
-            }
-        }
-        imports++;
-    }
-    MessageBoxA(NULL, "Failed to find Direct3DCreate9 in IAT!", "DEBUG ERROR", MB_OK);
+    
+    pD3D->Release();
+    DestroyWindow(hwnd);
 }
 
 // ═══════════════════════════════════════════
@@ -238,7 +207,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // IAT test");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // inline hook");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -336,7 +305,7 @@ bool Init() {
 DWORD WINAPI InitThread(LPVOID) {
     Sleep(2000); 
     if (Init()) {
-        HookIAT(); 
+        HookD3D9(); 
     } else {
         MessageBoxA(NULL, "Engine init failed!", "DEBUG ERROR", MB_OK);
     }
