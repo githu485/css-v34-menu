@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL SAFE TEST
+// commandvs.cpp — css v34 (VEngineClient011) 100% SAFE SCANNER
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -45,16 +45,14 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ (НАЙДЕНЫ СКАНЕРОМ)
+// ИЗВЕСТНЫЕ ОФФСЕТЫ
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
-    constexpr uintptr_t Team      = 0x90;
-    constexpr uintptr_t Origin    = 0x1D4; // Пока используем этот, но проверим другие
     constexpr uintptr_t BoneMat   = 0x4E4;
 }
 
 // ═══════════════════════════════════════════
-//   Безопасное чтение памяти (Защита от крашей)
+//   Безопасное чтение памяти
 // ═══════════════════════════════════════════
 template<typename T>
 bool SafeRead(uintptr_t addr, T& out) {
@@ -81,16 +79,13 @@ bool IsPlayerEntitySafe(void* ent) {
     int hp = 0;
     if (!SafeRead((uintptr_t)ent + Off::Health, hp)) return false;
     if (hp <= 0 || hp > 100) return false;
-
     uintptr_t bonePtr = 0;
     if (!SafeRead((uintptr_t)ent + Off::BoneMat, bonePtr)) return false;
     if (bonePtr < 0x10000000 || bonePtr > 0x7FFFFFFF) return false;
-
     return true;
 }
 
 int  Ent_Health(void* e) { int hp = 0; SafeRead((uintptr_t)e + Off::Health, hp); return hp; }
-Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
 
 // ═══════════════════════════════════════════
 //   Фокус и Мышка
@@ -106,16 +101,15 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   F10 DIAGNOSTICS (Тест оффсетов)
+//   SAFE SCANNER (F10)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS FINAL OFFSET TEST ===\r\n\r\n";
+    ss << "=== COMMANDVS SAFE SCANNER ===\r\n\r\n";
     
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return "Not in game!\r\n";
 
-    // Найдем первого попавшегося врага
     int hi = Entity_Highest();
     void* targetEnt = nullptr;
     for (int i = 1; i <= hi; i++) {
@@ -124,30 +118,36 @@ std::string GenerateDiagnostics() {
         if (e && IsPlayerEntitySafe(e)) { targetEnt = e; break; }
     }
 
-    if (!targetEnt) return "No target found!\r\n";
+    if (!targetEnt) return "No bots found! Type 'bot_add' in console.\r\n";
 
     ss << "Player HP: " << Ent_Health(targetEnt) << "\r\n\r\n";
 
-    // Тестируем три разных оффсета позиции
+    // 1. Ищем Origin бота
+    ss << "[ ORIGIN CANDIDATES ]\r\n";
     uintptr_t base = (uintptr_t)targetEnt;
-    
-    Vector pos1; SafeRead(base + 0x128, pos1);
-    ss << "Offset 0x128 (Standard):\r\n  X:" << pos1.x << " Y:" << pos1.y << " Z:" << pos1.z << "\r\n";
-    
-    Vector pos2; SafeRead(base + 0x1D4, pos2);
-    ss << "Offset 0x1D4 (Found):\r\n  X:" << pos2.x << " Y:" << pos2.y << " Z:" << pos2.z << "\r\n";
+    for (uintptr_t off = 0x00; off < 0x2000; off += 4) {
+        Vector v;
+        if (SafeRead(base + off, v)) {
+            if (fabsf(v.x) > 10.0f && fabsf(v.x) < 10000.0f &&
+                fabsf(v.y) > 10.0f && fabsf(v.y) < 10000.0f &&
+                v.z > -200.0f && v.z < 200.0f && fabsf(v.z) > 0.1f) {
+                ss << "0x" << std::hex << off << " -> X:" << std::dec << v.x << " Y:" << v.y << " Z:" << v.z << "\r\n";
+            }
+        }
+    }
+    ss << "\r\n";
 
-    Vector pos3; SafeRead(base + 0x12C, pos3);
-    ss << "Offset 0x12C (Alt):\r\n  X:" << pos3.x << " Y:" << pos3.y << " Z:" << pos3.z << "\r\n\r\n";
-
-    // Тестируем матрицу 37 (стандарт)
-    typedef VMatrix*(__thiscall* F)(void*);
-    VMatrix* m = vf<F>(g_engine, 37)(g_engine);
-    if (m) {
-        ss << "Matrix [37] Data:\r\n";
-        ss << "  [0][0]: " << (*m)[0][0] << " | [1][1]: " << (*m)[1][1] << " | [3][3]: " << (*m)[3][3] << "\r\n";
-    } else {
-        ss << "Matrix [37] is NULL!\r\n";
+    // 2. Ищем Матрицу Камеры в памяти движка (Без вызова функций!)
+    ss << "[ MATRIX CANDIDATES (Inside Engine) ]\r\n";
+    uintptr_t engBase = (uintptr_t)g_engine;
+    for (uintptr_t off = 0x00; off < 0x4000; off += 4) {
+        VMatrix m;
+        if (SafeRead(engBase + off, m)) {
+            // Ищем идеальную матрицу (правый нижний угол 1.0)
+            if (m[3][3] > 0.99f && m[3][3] < 1.01f && m[0][0] > 0.1f && m[1][1] > 0.1f) {
+                ss << "Engine + 0x" << std::hex << off << " -> Matrix Found!\r\n";
+            }
+        }
     }
 
     return ss.str();
@@ -171,9 +171,8 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // OFFSET TEST (F10 to close)",
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // SAFE SCANNER (F10)",
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
         );
     }
@@ -192,7 +191,6 @@ void ToggleDiagWindow() {
             HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
             SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
         }
-
         ShowWindow(g_diagWnd, SW_SHOW);
         SetForegroundWindow(g_diagWnd);
     }
@@ -217,21 +215,11 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
-void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color) {
-    DrawRect(x, y, w, thickness, color);
-    DrawRect(x, y + h - thickness, w, thickness, color);
-    DrawRect(x, y, thickness, h, color);
-    DrawRect(x + w - thickness, y, thickness, h, color);
-}
-
 // ═══════════════════════════════════════════
-//   ESP Логика
+//   ESP
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
-    bool box = true;
-    D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56); 
-    D3DCOLOR fillColor = D3DCOLOR_ARGB(40, 232, 168, 56);
 } g_esp;
 
 void DrawESP() {
@@ -245,57 +233,11 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); // Хук работает
+    // Красный квадрат для проверки
+    DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 0)); 
 
-    if (!Engine_InGame()) return;
-    int lp = Engine_LocalPlayer();
-    if (lp <= 0) return;
-
-    typedef VMatrix*(__thiscall* F)(void*);
-    VMatrix* m = vf<F>(g_engine, 37)(g_engine); // Жестко 37
-    if (!m) return;
-
-    int sw, sh; Engine_ScreenSize(sw, sh);
-    int hi = Entity_Highest();
-
-    for (int i = 1; i <= hi; i++) {
-        if (i == lp) continue;
-        void* e = Entity_Get(i);
-        if (!e || !IsPlayerEntitySafe(e)) continue;
-
-        Vector feet = Ent_Origin(e); // Используем Off::Origin (0x1D4)
-        Vector head = feet + Vector(0, 0, 72);
-
-        float cwH = (*m)[3][0]*head.x + (*m)[3][1]*head.y + (*m)[3][2]*head.z + (*m)[3][3];
-        float cwF = (*m)[3][0]*feet.x + (*m)[3][1]*feet.y + (*m)[3][2]*feet.z + (*m)[3][3];
-
-        if (cwH > 0.001f && cwF > 0.001f) {
-            float iwH = 1.0f / cwH;
-            float sxH = ((*m)[0][0]*head.x + (*m)[0][1]*head.y + (*m)[0][2]*head.z + (*m)[0][3]) * iwH;
-            float syH = ((*m)[1][0]*head.x + (*m)[1][1]*head.y + (*m)[1][2]*head.z + (*m)[1][3]) * iwH;
-            float sXH = (sw * 0.5f) + (sxH * sw) * 0.5f;
-            float sYH = (sh * 0.5f) - (syH * sh) * 0.5f;
-
-            float iwF = 1.0f / cwF;
-            float sxF = ((*m)[0][0]*feet.x + (*m)[0][1]*feet.y + (*m)[0][2]*feet.z + (*m)[0][3]) * iwF;
-            float syF = ((*m)[1][0]*feet.x + (*m)[1][1]*feet.y + (*m)[1][2]*feet.z + (*m)[1][3]) * iwF;
-            float sXF = (sw * 0.5f) + (sxF * sw) * 0.5f;
-            float sYF = (sh * 0.5f) - (syF * sh) * 0.5f;
-
-            float h = sYF - sYH;
-            if (h > 4 && h < 1800) {
-                float w = h * 0.42f;
-                float x0 = sXH - w * 0.5f;
-                float y0 = sYH;
-
-                DrawRect(x0, y0, w, h, g_esp.fillColor);
-                if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
-            }
-        }
-    }
+    // Отрисовка боксов временно отключена, пока не найдем оффсеты через сканер
 
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
@@ -313,34 +255,18 @@ namespace P {
     const COLORREF TEXT      = RGB(232, 233, 240);
     const COLORREF SUBTEXT   = RGB(135, 137, 148);
     const COLORREF ACCENT    = RGB(232, 168, 56);
-    const COLORREF ACCENT_HI = RGB(248, 200, 104);
     const COLORREF ON        = RGB(232, 168, 56);
     const COLORREF OFF       = RGB(48, 50, 58);
     const COLORREF KNOB      = RGB(240, 241, 246);
     const COLORREF CLOSE_H   = RGB(210, 70, 70);
     const COLORREF ROW_HOV   = RGB(24, 26, 32);
-    const COLORREF SW_ACTIVE = RGB(240, 241, 246);
 }
 
-const int WW = 320, WH = 280, HH = 44, TBH = 34;
+const int WW = 320, WH = 200, HH = 44, TBH = 34;
 HWND g_wnd = nullptr;
 HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
 volatile bool g_closing = false;
-
-D3DCOLOR g_colors[] = {
-    D3DCOLOR_ARGB(255, 232, 168, 56), D3DCOLOR_ARGB(255, 120, 90, 255), 
-    D3DCOLOR_ARGB(255, 80, 220, 100), D3DCOLOR_ARGB(255, 230, 70, 70),
-    D3DCOLOR_ARGB(255, 100, 180, 255), D3DCOLOR_ARGB(255, 255, 255, 255),
-    D3DCOLOR_ARGB(255, 255, 120, 200), D3DCOLOR_ARGB(255, 80, 200, 200),
-};
-COLORREF g_swatches[] = {
-    RGB(232, 168, 56), RGB(120, 90, 255), RGB(80, 220, 100), RGB(230, 70, 70),
-    RGB(100, 180, 255), RGB(255, 255, 255), RGB(255, 120, 200), RGB(80, 200, 200),
-};
-
-enum CtrlType { CTRL_TOGGLE, CTRL_COLOR };
-struct Ctrl { RECT r; int type; void* data; std::string label; int id; };
-std::vector<Ctrl> g_ctrls;
+std::vector<RECT> g_ctrls;
 
 void fillRect(HDC dc, RECT r, COLORREF c) { HBRUSH br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
 void fillGrad(HDC dc, RECT r, COLORREF top, COLORREF bot) {
@@ -375,17 +301,7 @@ void drawToggle(HDC dc, RECT row, bool on) {
 void LayoutUI() {
     g_ctrls.clear();
     int cx = 16, cw = WW - 32, y = HH + TBH + 16;
-    const char* lbl[] = { "Enable ESP", "Box" };
-    bool* vals[] = { &g_esp.enabled, &g_esp.box };
-    for (int i = 0; i < 2; i++) {
-        Ctrl c; c.r = { cx, y, cx + cw, y + 26 }; c.type = CTRL_TOGGLE; c.data = vals[i]; c.label = lbl[i]; c.id = i;
-        g_ctrls.push_back(c); y += 34;
-    }
-    y += 10;
-    for (int i = 0; i < 8; i++) {
-        Ctrl sw; sw.r = { cx + i*32, y, cx + i*32 + 24, y + 24 }; sw.type = CTRL_COLOR; sw.data = (void*)(uintptr_t)i; sw.id = i;
-        g_ctrls.push_back(sw);
-    }
+    g_ctrls.push_back({ cx, y, cx + cw, y + 26 }); // ESP Toggle Rect
 }
 
 void DrawUI(HDC dc) {
@@ -395,7 +311,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offset test");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for safe scan");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -404,20 +320,11 @@ void DrawUI(HDC dc) {
     DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
 
-    for (auto& c : g_ctrls) {
-        if (c.type == CTRL_TOGGLE) {
-            if (PtInRect(&c.r, mp)) fillRound(dc, c.r, P::ROW_HOV, 4);
-            txt(dc, g_fB, P::TEXT, c.r.left + 6, c.r.top + 5, c.label.c_str());
-            drawToggle(dc, c.r, *(bool*)c.data);
-        }
-        else if (c.type == CTRL_COLOR) {
-            COLORREF col = g_swatches[c.id];
-            bool sel = (g_esp.color == g_colors[c.id]);
-            RECT r = c.r;
-            if (sel) { RECT ring = { r.left - 2, r.top - 2, r.right + 2, r.bottom + 2 }; strokeRound(dc, ring, P::SW_ACTIVE, 14); }
-            fillRound(dc, r, col, 12);
-            if (PtInRect(&r, mp)) strokeRound(dc, r, P::ACCENT_HI, 12);
-        }
+    if (!g_ctrls.empty()) {
+        RECT r = g_ctrls[0];
+        if (PtInRect(&r, mp)) fillRound(dc, r, P::ROW_HOV, 4);
+        txt(dc, g_fB, P::TEXT, r.left + 6, r.top + 5, "Enable ESP");
+        drawToggle(dc, r, g_esp.enabled);
     }
 }
 
@@ -438,11 +345,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
             RECT closeR = { WW - 36, 10, WW - 12, 34 };
             if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); FocusGame(); return 0; }
-            for (auto& c : g_ctrls) {
-                if (!PtInRect(&c.r, p)) continue;
-                if (c.type == CTRL_TOGGLE) { *(bool*)c.data = !*(bool*)c.data; InvalidateRect(h, NULL, FALSE); }
-                else if (c.type == CTRL_COLOR) { g_esp.color = g_colors[c.id]; InvalidateRect(h, NULL, FALSE); }
-            }
+            if (!g_ctrls.empty() && PtInRect(&g_ctrls[0], p)) { g_esp.enabled = !g_esp.enabled; InvalidateRect(h, NULL, FALSE); }
             return 0;
         }
         case WM_ERASEBKGND: return 1;
@@ -459,7 +362,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; ScreenToClient(h, &p);
                 RECT closeR = { WW - 36, 10, WW - 12, 34 };
                 if (PtInRect(&closeR, p)) return HTCLIENT;
-                for (auto& c : g_ctrls) if (PtInRect(&c.r, p)) return HTCLIENT;
+                if (!g_ctrls.empty() && PtInRect(&g_ctrls[0], p)) return HTCLIENT;
                 return HTCAPTION;
             }
             return hit;
@@ -508,10 +411,8 @@ Present_t g_origPresent = nullptr;
 
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
     HRESULT result = g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
-    
     g_pDevice = pDevice;
     DrawESP();
-    
     return result;
 }
 
@@ -519,28 +420,20 @@ void HookD3D9() {
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
-
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
-    d3dpp.Windowed = TRUE; 
-    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.hDeviceWindow = hwnd;
-    d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-
+    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
     IDirect3DDevice9* pDevice = nullptr;
     HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
-
     if (pDevice) {
         void** vTable = *(void***)pDevice;
         g_origPresent = (Present_t)vTable[17];
-
         DWORD old;
         VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
         vTable[17] = (void*)hkPresent;
         VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-        
         pDevice->Release();
     }
-    
     pD3D->Release();
     DestroyWindow(hwnd);
 }
@@ -552,22 +445,17 @@ bool Init() {
     HMODULE eng = GetModuleHandleA("engine.dll");
     HMODULE cli = GetModuleHandleA("client.dll");
     if (!eng || !cli) return false;
-
     auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
     auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
     if (!cifE || !cifC) return false;
-
     g_engine     = cifE("VEngineClient011", nullptr);
     g_entityList = cifC("VClientEntityList003", nullptr);
-
     return g_engine && g_entityList;
 }
 
 DWORD WINAPI InitThread(LPVOID) {
     Sleep(2000); 
-    if (Init()) {
-        HookD3D9(); 
-    }
+    if (Init()) HookD3D9(); 
     return 0;
 }
 
