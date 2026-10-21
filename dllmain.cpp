@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) W2S SCANNER
+// commandvs.cpp — css v34 (VEngineClient011) FINAL SAFE TEST
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -49,7 +49,7 @@ template<typename T> T vf(void* inst, int idx) {
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
     constexpr uintptr_t Team      = 0x90;
-    constexpr uintptr_t Origin    = 0x1D4;
+    constexpr uintptr_t Origin    = 0x1D4; // Пока используем этот, но проверим другие
     constexpr uintptr_t BoneMat   = 0x4E4;
 }
 
@@ -106,20 +106,16 @@ void FocusGame() {
 }
 
 // ═══════════════════════════════════════════
-//   W2S INDEX SCANNER (F10)
+//   F10 DIAGNOSTICS (Тест оффсетов)
 // ═══════════════════════════════════════════
 std::string GenerateDiagnostics() {
     std::stringstream ss;
-    ss << "=== COMMANDVS W2S SCANNER ===\r\n\r\n";
+    ss << "=== COMMANDVS FINAL OFFSET TEST ===\r\n\r\n";
     
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return "Not in game!\r\n";
 
-    int sw, sh;
-    Engine_ScreenSize(sw, sh);
-    ss << "Screen Size: " << sw << " x " << sh << "\r\n";
-
-    // Найдем первого попавшегося врага, чтобы на нем тестить матрицу
+    // Найдем первого попавшегося врага
     int hi = Entity_Highest();
     void* targetEnt = nullptr;
     for (int i = 1; i <= hi; i++) {
@@ -128,43 +124,30 @@ std::string GenerateDiagnostics() {
         if (e && IsPlayerEntitySafe(e)) { targetEnt = e; break; }
     }
 
-    if (!targetEnt) return "No target found to test W2S!\r\n";
+    if (!targetEnt) return "No target found!\r\n";
 
-    Vector feet = Ent_Origin(targetEnt);
-    Vector head = feet + Vector(0, 0, 72);
-    ss << "Target Origin: X:" << feet.x << " Y:" << feet.y << " Z:" << feet.z << "\r\n\r\n";
+    ss << "Player HP: " << Ent_Health(targetEnt) << "\r\n\r\n";
 
-    ss << "[ TESTING W2S MATRIX INDEXES 30-45 ]\r\n";
+    // Тестируем три разных оффсета позиции
+    uintptr_t base = (uintptr_t)targetEnt;
+    
+    Vector pos1; SafeRead(base + 0x128, pos1);
+    ss << "Offset 0x128 (Standard):\r\n  X:" << pos1.x << " Y:" << pos1.y << " Z:" << pos1.z << "\r\n";
+    
+    Vector pos2; SafeRead(base + 0x1D4, pos2);
+    ss << "Offset 0x1D4 (Found):\r\n  X:" << pos2.x << " Y:" << pos2.y << " Z:" << pos2.z << "\r\n";
 
-    for (int idx = 30; idx <= 45; idx++) {
-        typedef VMatrix*(__thiscall* F)(void*);
-        VMatrix* m = vf<F>(g_engine, idx)(g_engine);
-        
-        if (!m) {
-            ss << "Index " << idx << ": NULL pointer\r\n";
-            continue;
-        }
+    Vector pos3; SafeRead(base + 0x12C, pos3);
+    ss << "Offset 0x12C (Alt):\r\n  X:" << pos3.x << " Y:" << pos3.y << " Z:" << pos3.z << "\r\n\r\n";
 
-        // Пробуем перевести координаты головы
-        float cw = (*m)[3][0]*head.x + (*m)[3][1]*head.y + (*m)[3][2]*head.z + (*m)[3][3];
-        
-        if (cw > 0.001f) {
-            float iw = 1.0f / cw;
-            float sx = ((*m)[0][0]*head.x + (*m)[0][1]*head.y + (*m)[0][2]*head.z + (*m)[0][3]) * iw;
-            float sy = ((*m)[1][0]*head.x + (*m)[1][1]*head.y + (*m)[1][2]*head.z + (*m)[1][3]) * iw;
-            
-            float screenX = (sw * 0.5f) + (sx * sw) * 0.5f;
-            float screenY = (sh * 0.5f) - (sy * sh) * 0.5f;
-
-            // Если координаты адекватные
-            if (screenX > -2000 && screenX < 2000 && screenY > -2000 && screenY < 2000) {
-                ss << "-> Index " << idx << ": VALID! (X:" << screenX << " Y:" << screenY << ")\r\n";
-            } else {
-                ss << "Index " << idx << ": out of bounds (X:" << screenX << " Y:" << screenY << ")\r\n";
-            }
-        } else {
-            ss << "Index " << idx << ": behind camera\r\n";
-        }
+    // Тестируем матрицу 37 (стандарт)
+    typedef VMatrix*(__thiscall* F)(void*);
+    VMatrix* m = vf<F>(g_engine, 37)(g_engine);
+    if (m) {
+        ss << "Matrix [37] Data:\r\n";
+        ss << "  [0][0]: " << (*m)[0][0] << " | [1][1]: " << (*m)[1][1] << " | [3][3]: " << (*m)[3][3] << "\r\n";
+    } else {
+        ss << "Matrix [37] is NULL!\r\n";
     }
 
     return ss.str();
@@ -188,7 +171,7 @@ void ToggleDiagWindow() {
         RegisterClassExA(&wc);
 
         g_diagWnd = CreateWindowExA(
-            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // W2S SCANNER (F10 to close)",
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // OFFSET TEST (F10 to close)",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 600, 500,
             NULL, NULL, wc.hInstance, NULL
@@ -271,14 +254,11 @@ void DrawESP() {
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
 
-    // Временно используем 37 индекс, чтобы просто рисовать. 
-    // Если боксы будут в углу экрана, мы поменяем этот индекс на тот, что найдем.
     typedef VMatrix*(__thiscall* F)(void*);
-    VMatrix* m = vf<F>(g_engine, 37)(g_engine);
+    VMatrix* m = vf<F>(g_engine, 37)(g_engine); // Жестко 37
     if (!m) return;
 
-    int sw, sh;
-    Engine_ScreenSize(sw, sh);
+    int sw, sh; Engine_ScreenSize(sw, sh);
     int hi = Entity_Highest();
 
     for (int i = 1; i <= hi; i++) {
@@ -286,7 +266,7 @@ void DrawESP() {
         void* e = Entity_Get(i);
         if (!e || !IsPlayerEntitySafe(e)) continue;
 
-        Vector feet = Ent_Origin(e);
+        Vector feet = Ent_Origin(e); // Используем Off::Origin (0x1D4)
         Vector head = feet + Vector(0, 0, 72);
 
         float cwH = (*m)[3][0]*head.x + (*m)[3][1]*head.y + (*m)[3][2]*head.z + (*m)[3][3];
@@ -415,7 +395,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for W2S scan");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "F10 for offset test");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
