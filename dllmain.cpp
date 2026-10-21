@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) IAT HOOK (FINAL RENDER TEST)
+// commandvs.cpp — css v34 (VEngineClient011) IAT HOOK (MINgW FIX)
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -19,10 +19,6 @@ typedef void* (*CreateInterfaceFn)(const char*, int*);
 void* g_engine = nullptr;
 IDirect3DDevice9* g_pDevice = nullptr;
 bool g_showSquare = false;
-
-template<typename T> T vf(void* inst, int idx) {
-    return (T)(*(void***)inst)[idx];
-}
 
 // ═══════════════════════════════════════════
 //   DirectX 9 Render
@@ -108,42 +104,47 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
 typedef IDirect3D9* (WINAPI* Direct3DCreate9_t)(UINT);
 Direct3DCreate9_t g_origDirect3DCreate9 = nullptr;
 
+typedef HRESULT(__stdcall* CreateDevice_t)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
+CreateDevice_t g_origCreateDevice = nullptr;
+
+// Выносим функцию хука отдельно (MinGW не любит лямбды в vtable)
+HRESULT __stdcall hkCreateDevice(IDirect3D9* _this, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface) {
+    // Вызываем оригинал
+    HRESULT hr = g_origCreateDevice(_this, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
+    
+    // Если девайс успешно создался, хукаем его vtable
+    if (SUCCEEDED(hr) && ppReturnedDeviceInterface && *ppReturnedDeviceInterface) {
+        IDirect3DDevice9* dev = *ppReturnedDeviceInterface;
+        void** vTable = *(void***)dev;
+        DWORD old;
+
+        // Хук Present (17)
+        g_origPresent = (Present_t)vTable[17];
+        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[17] = (void*)hkPresent;
+        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
+
+        // Хук EndScene (42)
+        g_origEndScene = (EndScene_t)vTable[42];
+        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[42] = (void*)hkEndScene;
+        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+    }
+    return hr;
+}
+
 IDirect3D9* WINAPI hkDirect3DCreate9(UINT SDKVersion) {
     IDirect3D9* pD3D = g_origDirect3DCreate9(SDKVersion);
     if (pD3D) {
-        // Хукаем CreateDevice, чтобы получить настоящий девайс игры
-        typedef HRESULT(__thiscall* CreateDevice_t)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD, D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
-        CreateDevice_t origCreateDevice = (CreateDevice_t)(*(void***)pD3D)[16]; // CreateDevice index 16
-
-        // Создаем наш хук для CreateDevice
-        auto hkCreateDevice = [](IDirect3D9* _this, UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice9** ppReturnedDeviceInterface) -> HRESULT {
-            HRESULT hr = ((CreateDevice_t)(*(void***)_this)[16])(_this, Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
-            
-            if (SUCCEEDED(hr) && ppReturnedDeviceInterface && *ppReturnedDeviceInterface) {
-                IDirect3DDevice9* dev = *ppReturnedDeviceInterface;
-                void** vTable = *(void***)dev;
-                DWORD old;
-
-                // Хук Present (17)
-                g_origPresent = (Present_t)vTable[17];
-                VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-                vTable[17] = (void*)hkPresent;
-                VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-
-                // Хук EndScene (42)
-                g_origEndScene = (EndScene_t)vTable[42];
-                VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-                vTable[42] = (void*)hkEndScene;
-                VirtualProtect(&vTable[42], sizeof(void*), old, &old);
-            }
-            return hr;
-        };
-
-        // Заменяем CreateDevice на наш хук
+        // Перехватываем CreateDevice
+        g_origCreateDevice = (CreateDevice_t)(*(void***)pD3D)[16]; // CreateDevice index 16
+        
         DWORD old;
         VirtualProtect(&(*(void***)pD3D)[16], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
         (*(void***)pD3D)[16] = (void*)hkCreateDevice;
         VirtualProtect(&(*(void***)pD3D)[16], sizeof(void*), old, &old);
+        
+        MessageBoxA(NULL, "IAT Hooked Direct3DCreate9 & CreateDevice!", "DEBUG SUCCESS", MB_OK);
     }
     return pD3D;
 }
@@ -178,7 +179,6 @@ void HookIAT() {
                         thunk->u1.Function = (uintptr_t)hkDirect3DCreate9;
                         
                         VirtualProtect(&thunk->u1.Function, sizeof(void*), oldProtect, &oldProtect);
-                        MessageBoxA(NULL, "IAT Hooked Direct3DCreate9!", "DEBUG SUCCESS", MB_OK);
                         return;
                     }
                 }
@@ -238,7 +238,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // IAT render test");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // IAT test");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
