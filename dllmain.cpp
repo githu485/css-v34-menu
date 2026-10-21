@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL WORKING ESP (Matrix 2)
+// commandvs.cpp — css v34 (VEngineClient011) VISUAL DEBUG
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -44,15 +44,15 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// НАЙДЕННЫЕ ОФФСЕТЫ
+// ОФФСЕТЫ
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
-    constexpr uintptr_t Origin    = 0x1b18; // Найдено сканером!
+    constexpr uintptr_t Origin    = 0x1b18; // Найденный Origin
     constexpr uintptr_t BoneMat   = 0x4E4;
-    constexpr uintptr_t W2SMatrix = 0x3094; // ПРОБУЕМ ВТОРОЙ ВАРИАНТ!
+    constexpr uintptr_t W2SMatrix = 0x3094; // Второй вариант матрицы
 }
 
-// Безопасное чтение памяти
+// Безопасное чтение
 template<typename T>
 bool SafeRead(uintptr_t addr, T& out) {
     if (addr < 0x10000) return false;
@@ -84,12 +84,10 @@ bool IsPlayerEntitySafe(void* ent) {
     return true;
 }
 
-int  Ent_Health(void* e) { int hp = 0; SafeRead((uintptr_t)e + Off::Health, hp); return hp; }
 Vector Ent_Origin(void* e) { Vector v; SafeRead((uintptr_t)e + Off::Origin, v); return v; }
 
 bool WorldToScreen(const Vector& w, Vector& out) {
     VMatrix* m = (VMatrix*)((uintptr_t)g_engine + Off::W2SMatrix);
-    
     float cw = (*m)[3][0]*w.x + (*m)[3][1]*w.y + (*m)[3][2]*w.z + (*m)[3][3];
     if (cw < 0.001f) return false;
     float iw = 1.0f / cw;
@@ -134,11 +132,16 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
-void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color) {
-    DrawRect(x, y, w, thickness, color);
-    DrawRect(x, y + h - thickness, w, thickness, color);
-    DrawRect(x, y, thickness, h, color);
-    DrawRect(x + w - thickness, y, thickness, h, color);
+void DrawLine(float x1, float y1, float x2, float y2, D3DCOLOR color) {
+    if (!g_pDevice) return;
+    struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
+    Vertex v[2] = {
+        { x1, y1, 0.0f, 1.0f, color },
+        { x2, y2, 0.0f, 1.0f, color }
+    };
+    g_pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    g_pDevice->SetTexture(0, NULL);
+    g_pDevice->DrawPrimitiveUP(D3DPT_LINELIST, 1, v, sizeof(Vertex));
 }
 
 // ═══════════════════════════════════════════
@@ -146,9 +149,6 @@ void DrawBox(float x, float y, float w, float h, float thickness, D3DCOLOR color
 // ═══════════════════════════════════════════
 struct ESP {
     bool enabled = false;
-    bool box = true;
-    D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56); 
-    D3DCOLOR fillColor = D3DCOLOR_ARGB(40, 232, 168, 56);
 } g_esp;
 
 void DrawESP() {
@@ -162,12 +162,18 @@ void DrawESP() {
     g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
     if (!Engine_InGame()) return;
     int lp = Engine_LocalPlayer();
     if (lp <= 0) return;
+
+    int sw, sh; Engine_ScreenSize(sw, sh);
+    int centerX = sw / 2;
+    int centerY = sh / 2;
+
+    // Крестик в центре экрана
+    DrawRect(centerX - 1, centerY - 10, 2, 20, D3DCOLOR_ARGB(255, 255, 255, 255));
+    DrawRect(centerX - 10, centerY - 1, 20, 2, D3DCOLOR_ARGB(255, 255, 255, 255));
 
     int hi = Entity_Highest();
     for (int i = 1; i <= hi; i++) {
@@ -180,15 +186,10 @@ void DrawESP() {
 
         Vector sH, sF;
         if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-            float h = sF.y - sH.y;
-            if (h > 4 && h < 1800) {
-                float w = h * 0.42f;
-                float x0 = sH.x - w * 0.5f;
-                float y0 = sH.y;
-
-                DrawRect(x0, y0, w, h, g_esp.fillColor);
-                if (g_esp.box) DrawBox(x0, y0, w, h, 1.5f, g_esp.color);
-            }
+            // Линия к голове (зеленая)
+            DrawLine(centerX, centerY, sH.x, sH.y, D3DCOLOR_ARGB(255, 0, 255, 0));
+            // Линия к ногам (красная)
+            DrawLine(centerX, centerY, sF.x, sF.y, D3DCOLOR_ARGB(255, 255, 0, 0));
         }
     }
 
@@ -264,7 +265,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // final");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // visual debug");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -409,13 +410,14 @@ DWORD WINAPI InitThread(LPVOID) {
 }
 
 BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_DETACH) {
+        g_closing = true; if (g_wnd) PostMessageA(g_wnd, WM_QUIT, 0, 0);
+        return TRUE;
+    }
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(h);
         CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
         CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
-    }
-    else if (reason == DLL_PROCESS_DETACH) {
-        g_closing = true; if (g_wnd) PostMessageA(g_wnd, WM_QUIT, 0, 0);
     }
     return TRUE;
 }
