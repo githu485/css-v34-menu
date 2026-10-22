@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL ESP WORKING
+// commandvs.cpp — css v34 (VEngineClient011) FINAL ESP + SMALL TEST BOXES
 #include <windows.h>
 #include <windowsx.h>
 #include <d3d9.h>
@@ -17,12 +17,14 @@ struct Vector {
     Vector() : x(0), y(0), z(0) {}
     Vector(float a, float b, float c) : x(a), y(b), z(c) {}
     Vector operator+(const Vector& v) const { return { x+v.x, y+v.y, z+v.z }; }
+    Vector operator-(const Vector& v) const { return { x-v.x, y-v.y, z-v.z }; }
     float Length() const { return sqrtf(x*x + y*y + z*z); }
 };
+struct matrix3x4_t { float m[3][4]; };
 struct VMatrix { float m[4][4]; float* operator[](int i){ return m[i]; } const float* operator[](int i) const { return m[i]; } };
 
 // ═══════════════════════════════════════════
-//   Interfaces & Offsets (ТВОИ КАСТОМНЫЕ!)
+//   Interfaces & Offsets
 // ═══════════════════════════════════════════
 typedef void* (*CreateInterfaceFn)(const char*, int*);
 void* g_engine = nullptr;
@@ -38,11 +40,12 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
+// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ
 namespace Off {
-    constexpr uintptr_t Health    = 0xDA4;  // Твой HP
-    constexpr uintptr_t Origin    = 0x1b18; // Твой Origin
-    constexpr uintptr_t BoneMat   = 0x4E4;  // Твоя матрица костей
-    constexpr uintptr_t W2SMatrix = 0x3094; // Твоя W2S матрица (внутри g_engine)
+    constexpr uintptr_t Health    = 0xDA4;
+    constexpr uintptr_t Origin    = 0x1b18; 
+    constexpr uintptr_t BoneMat   = 0x4E4;
+    constexpr uintptr_t W2SMatrix = 0x3094;
 }
 
 int  Engine_LocalPlayer()             { typedef int(__thiscall* F)(void*); return vf<F>(g_engine, VT_ENGINE_LOCALPLAYER)(g_engine); }
@@ -63,12 +66,9 @@ bool SafeRead(uintptr_t addr, void* out, size_t size) {
     return false;
 }
 
-bool IsPlayerEntitySafe(void* ent) {
-    if (!ent) return false;
-    int hp = 0;
-    if (!SafeRead((uintptr_t)ent + Off::Health, &hp, 4)) return false;
-    if (hp <= 0 || hp > 100) return false;
-    return true;
+Vector BonePos(matrix3x4_t* b, int i) {
+    if (!b) return {};
+    return { b[i].m[0][3], b[i].m[1][3], b[i].m[2][3] };
 }
 
 bool WorldToScreen(const Vector& w, Vector& out) {
@@ -89,7 +89,7 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 //   Глобалы DX9
 // ═══════════════════════════════════════════
 IDirect3DDevice9* g_pDevice = nullptr;
-bool g_showSquare = false; // Оставил для теста, можешь потом выключить
+bool g_showSquare = false;
 bool g_espEnabled = true;
 
 typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
@@ -98,7 +98,7 @@ typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
 EndScene_t g_origEndScene = nullptr;
 
 // ═══════════════════════════════════════════
-//   DirectX 9 Render (Твой идеальный SafeRenderTest)
+//   DirectX 9 Render
 // ═══════════════════════════════════════════
 void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     if (!g_pDevice) return;
@@ -159,43 +159,62 @@ void SafeRender() {
     g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
     g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
 
-    // 3. РИСУЕМ ТЕСТОВЫЕ КВАДРАТЫ (если включено)
+    // 3. МАЛЕНЬКИЕ ТЕСТОВЫЕ КВАДРАТЫ ПО ЦЕНТРУ
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
     if (g_showSquare) {
-        DrawRect(sw/2 - 100 - 120, sh/2 - 100, 200, 200, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
-        DrawRect(sw/2 - 100 + 120, sh/2 - 100, 200, 200, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
+        DrawRect(sw/2 - 70, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
+        DrawRect(sw/2 + 20, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
     }
 
-    // 4. РИСУЕМ ESP
+    // 4. ESP С ДЕБАГОМ
     if (g_espEnabled && Engine_InGame()) {
+        DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0)); // ЗЕЛЕНЫЙ: В игре
+
         int lp = Engine_LocalPlayer();
         if (lp > 0) {
+            DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255)); // СИНИЙ: Нашли себя
+
             int hi = Entity_Highest();
+            int foundHp = 0, foundBones = 0, foundW2S = 0;
+
             for (int i = 1; i <= hi; i++) {
                 if (i == lp) continue;
                 void* e = Entity_Get(i);
-                if (!e || !IsPlayerEntitySafe(e)) continue;
+                if (!e) continue;
 
-                Vector feet; 
-                if (!SafeRead((uintptr_t)e + Off::Origin, &feet, sizeof(Vector))) continue;
-                
-                Vector head = feet + Vector(0, 0, 72);
+                int hp = 0;
+                if (SafeRead((uintptr_t)e + Off::Health, &hp, 4) && hp > 0 && hp <= 100) {
+                    foundHp++;
+                    if (foundHp == 1) DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0)); // ЖЕЛТЫЙ: Нашли бота
 
-                Vector sH, sF;
-                if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-                    float h = sF.y - sH.y;
-                    if (h > 4 && h < 1800) {
-                        float w = h * 0.42f;
-                        float x0 = sH.x - w * 0.5f;
-                        float y0 = sH.y;
-                        
-                        // Рисуем бокс (оранжевый)
-                        D3DCOLOR color = D3DCOLOR_ARGB(255, 232, 168, 56);
-                        DrawRect(x0, y0, w, 1.5f, color); // Верх
-                        DrawRect(x0, y0 + h - 1.5f, w, 1.5f, color); // Низ
-                        DrawRect(x0, y0, 1.5f, h, color); // Лево
-                        DrawRect(x0 + w - 1.5f, y0, 1.5f, h, color); // Право
+                    uintptr_t bonePtr = 0;
+                    if (SafeRead((uintptr_t)e + Off::BoneMat, &bonePtr, 4) && bonePtr > 0x10000000) {
+                        foundBones++;
+                        if (foundBones == 1) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255)); // БЕЛЫЙ: Есть кости
+
+                        matrix3x4_t* bones = (matrix3x4_t*)bonePtr;
+                        Vector head = BonePos(bones, 8);
+                        Vector feet = BonePos(bones, 0);
+
+                        Vector sH, sF;
+                        if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
+                            foundW2S++;
+                            if (foundW2S == 1) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255)); // ФИОЛЕТОВЫЙ: W2S сработал
+
+                            float h = sF.y - sH.y;
+                            if (h > 4 && h < 1800) {
+                                float w = h * 0.42f;
+                                float x0 = sH.x - w * 0.5f;
+                                float y0 = sH.y;
+                                
+                                D3DCOLOR col = D3DCOLOR_ARGB(255, 232, 168, 56);
+                                DrawRect(x0, y0, w, 1.5f, col);
+                                DrawRect(x0, y0 + h - 1.5f, w, 1.5f, col);
+                                DrawRect(x0, y0, 1.5f, h, col);
+                                DrawRect(x0 + w - 1.5f, y0, 1.5f, h, col);
+                            }
+                        }
                     }
                 }
             }
@@ -323,7 +342,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // ESP READY");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // small boxes");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
