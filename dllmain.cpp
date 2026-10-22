@@ -1,325 +1,362 @@
-// commandvs.cpp — css v34 (VEngineClient011) INLINE HOOK
+// css_v34_external.cpp
+// build: g++ css_v34_external.cpp -o css_v34_external.exe -lgdi32 -luser32 -static
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <windowsx.h>
-#include <commctrl.h>
-#include <d3d9.h>
-#include <string>
+#include <tlhelp32.h>
 #include <vector>
+#include <string>
 #include <cmath>
-#include <cstdint>
-#include <cstring>
+#include <thread>
+#include <atomic>
+#include <algorithm>
+#include <cstdio>
 
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "msimg32.lib")
-#pragma comment(lib, "d3d9.lib")
+struct Vec3 { float x, y, z; };
+struct Vec2 { float x, y; };
 
-// ═══════════════════════════════════════════
-//   Globals
-// ═══════════════════════════════════════════
-typedef void* (*CreateInterfaceFn)(const char*, int*);
-void* g_engine = nullptr;
-IDirect3DDevice9* g_pDevice = nullptr;
-bool g_showSquare = false;
+static DWORD g_pid = 0;
+static HANDLE g_proc = nullptr;
+static uintptr_t clientBase = 0, engineBase = 0;
+static DWORD clientSize = 0, engineSize = 0;
+static std::atomic<bool> g_running{ true };
 
-// ═══════════════════════════════════════════
-//   DirectX 9 Render
-// ═══════════════════════════════════════════
-void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
-    if (!g_pDevice) return;
-    struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
-    Vertex v[4] = {
-        { x,     y,     0.0f, 1.0f, color },
-        { x + w, y,     0.0f, 1.0f, color },
-        { x,     y + h, 0.0f, 1.0f, color },
-        { x + w, y + h, 0.0f, 1.0f, color }
-    };
-    g_pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
-    g_pDevice->SetTexture(0, NULL);
-    g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
+struct Offsets {
+    uintptr_t dwLocalPlayer = 0;
+    uintptr_t dwEntityList = 0;
+    uintptr_t dwViewMatrix = 0;
+
+    DWORD m_iHealth = 0x8C;
+    DWORD m_iTeam = 0x9C;
+    DWORD m_vecOrigin = 0x2C;
+    DWORD m_lifeState = 0x8B;
+    DWORD m_bDormant = 0xED;
+} off;
+
+template<typename T>
+T ReadMem(uintptr_t addr) {
+    T v{};
+    if (!addr || !g_proc) return v;
+    ReadProcessMemory(g_proc, (LPCVOID)addr, &v, sizeof(T), nullptr);
+    return v;
 }
 
-void RenderTest(int offsetX, D3DCOLOR color) {
-    if (!g_showSquare || !g_pDevice) return;
-
-    DWORD oldZ, oldAlpha, oldLighting, oldCull;
-    g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
-    g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
-    g_pDevice->GetRenderState(D3DRS_LIGHTING, &oldLighting);
-    g_pDevice->GetRenderState(D3DRS_CULLMODE, &oldCull);
-
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
-    g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
-    g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
-    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    
-    DrawRect(sw/2 - 100 + offsetX, sh/2 - 100, 200, 200, color);
-
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
-    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
-    g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
-    g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
+template<typename T>
+bool WriteMem(uintptr_t addr, T value) {
+    if (!addr || !g_proc) return false;
+    return WriteProcessMemory(g_proc, (LPVOID)addr, &value, sizeof(T), nullptr) != FALSE;
 }
 
-// ═══════════════════════════════════════════
-//   Inline Hook Function (Встраиваемый хук)
-// ═══════════════════════════════════════════
-void* HookFunc(void* target, void* detour) {
-    if (!target || !detour) return nullptr;
-    
-    DWORD oldProtect;
-    VirtualProtect(target, 5, PAGE_EXECUTE_READWRITE, &oldProtect);
-    
-    // Выделяем память под "трамплин" (код, который вернет управление в оригинал)
-    void* trampoline = VirtualAlloc(nullptr, 20, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!trampoline) return nullptr;
-    
-    // Копируем оригинальные 5 байт в трамплин
-    memcpy(trampoline, target, 5);
-    
-    // Добавляем JMP (0xE9) обратно в оригинальную функцию (после наших 5 байт)
-    uintptr_t src = (uintptr_t)trampoline + 5;
-    uintptr_t dst = (uintptr_t)target + 5;
-    *(uint8_t*)((uintptr_t)trampoline + 5) = 0xE9;
-    *(uint32_t*)((uintptr_t)trampoline + 6) = (uint32_t)(dst - (src + 5));
-    
-    // Перезаписываем начало функции на JMP в наш детур
-    *(uint8_t*)target = 0xE9;
-    *(uint32_t*)((uintptr_t)target + 1) = (uint32_t)((uintptr_t)detour - ((uintptr_t)target + 5));
-    
-    VirtualProtect(target, 5, oldProtect, &oldProtect);
-    
-    return trampoline; // Возвращаем указатель на оригинал
-}
+DWORD GetPID(const wchar_t* name) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
 
-// ═══════════════════════════════════════════
-//   Hooks (Present + EndScene)
-// ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-Present_t g_origPresent = nullptr;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
 
-HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
-    static bool firstTime = true;
-    if (firstTime) {
-        firstTime = false;
-        MessageBoxA(NULL, "Present Hook Fired!", "DEBUG SUCCESS", MB_OK);
-    }
-
-    g_pDevice = pDevice;
-    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
-    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
-}
-
-typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
-EndScene_t g_origEndScene = nullptr;
-
-HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
-    static bool firstTime = true;
-    if (firstTime) {
-        firstTime = false;
-        MessageBoxA(NULL, "EndScene Hook Fired!", "DEBUG SUCCESS", MB_OK);
-    }
-
-    g_pDevice = pDevice;
-    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
-    return g_origEndScene(pDevice);
-}
-
-void HookD3D9() {
-    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
-    IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!pD3D) return;
-    
-    D3DPRESENT_PARAMETERS d3dpp = { 0 };
-    d3dpp.Windowed = TRUE; d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.hDeviceWindow = hwnd; d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-    
-    IDirect3DDevice9* pDevice = nullptr;
-    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
-    
-    if (pDevice) {
-        void** vTable = *(void***)pDevice;
-        
-        // Ставим Inline Hook на Present (индекс 17)
-        g_origPresent = (Present_t)HookFunc(vTable[17], (void*)hkPresent);
-        
-        // Ставим Inline Hook на EndScene (индекс 42)
-        g_origEndScene = (EndScene_t)HookFunc(vTable[42], (void*)hkEndScene);
-        
-        pDevice->Release();
-        MessageBoxA(NULL, "Inline Hooks Installed Successfully!", "DEBUG SUCCESS", MB_OK);
-    } else {
-        MessageBoxA(NULL, "CreateDevice failed!", "DEBUG ERROR", MB_OK);
-    }
-    
-    pD3D->Release();
-    DestroyWindow(hwnd);
-}
-
-// ═══════════════════════════════════════════
-//   Меню
-// ═══════════════════════════════════════════
-namespace P {
-    const COLORREF BG = RGB(18, 19, 23), HEAD_A = RGB(30, 32, 40), HEAD_B = RGB(22, 24, 30);
-    const COLORREF STROKE = RGB(46, 48, 58), TEXT = RGB(232, 233, 240), SUBTEXT = RGB(135, 137, 148);
-    const COLORREF ACCENT = RGB(232, 168, 56), ON = RGB(232, 168, 56), OFF = RGB(48, 50, 58);
-    const COLORREF KNOB = RGB(240, 241, 246), CLOSE_H = RGB(210, 70, 70), ROW_HOV = RGB(24, 26, 32);
-}
-
-const int WW = 320, WH = 160, HH = 44, TBH = 34;
-HWND g_wnd = nullptr;
-HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
-volatile bool g_closing = false;
-RECT g_toggleRect;
-
-void fillRect(HDC dc, RECT r, COLORREF c) { HBRUSH br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
-void fillGrad(HDC dc, RECT r, COLORREF top, COLORREF bot) {
-    TRIVERTEX v[2] = { { r.left, r.top, (COLOR16)(GetRValue(top)<<8), (COLOR16)(GetGValue(top)<<8), (COLOR16)(GetBValue(top)<<8), 0xFF00 },
-                       { r.right, r.bottom,(COLOR16)(GetRValue(bot)<<8), (COLOR16)(GetGValue(bot)<<8), (COLOR16)(GetBValue(bot)<<8), 0xFF00 } };
-    GRADIENT_RECT gr = { 0, 1 }; GradientFill(dc, v, 2, &gr, 1, GRADIENT_FILL_RECT_V);
-}
-void fillRound(HDC dc, RECT r, COLORREF c, int rad) {
-    HBRUSH br = CreateSolidBrush(c); HPEN pen = CreatePen(PS_NULL, 0, 0);
-    HGDIOBJ ob = SelectObject(dc, br); HGDIOBJ op = SelectObject(dc, pen);
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
-    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pen);
-}
-void txt(HDC dc, HFONT f, COLORREF c, int x, int y, const char* s) {
-    SelectObject(dc, f); SetTextColor(dc, c); SetBkMode(dc, TRANSPARENT); TextOutA(dc, x, y, s, (int)strlen(s));
-}
-void drawToggle(HDC dc, RECT row, bool on) {
-    int h = 18, w = 34;
-    RECT t = { row.right - w - 4, row.top + (row.bottom - row.top - h) / 2, row.right - 4, row.top + (row.bottom - row.top - h) / 2 + h };
-    fillRound(dc, t, on ? P::ON : P::OFF, h);
-    int ks = h - 6;
-    RECT k = { on ? (t.right - ks - 3) : (t.left + 3), t.top + 3, on ? (t.right - 3) : (t.left + 3 + ks), t.top + 3 + ks };
-    fillRound(dc, k, P::KNOB, ks);
-}
-
-void DrawUI(HDC dc) {
-    RECT cr; GetClientRect(g_wnd, &cr);
-    fillRect(dc, cr, P::BG);
-    RECT hr = { 0, 0, cr.right, HH };
-    fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
-    fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
-    txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // inline hook");
-
-    RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
-    POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
-    if (PtInRect(&closeR, mp)) fillRound(dc, closeR, P::CLOSE_H, 6);
-    SelectObject(dc, g_fBold); SetTextColor(dc, P::TEXT); SetBkMode(dc, TRANSPARENT);
-    DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
-
-    if (PtInRect(&g_toggleRect, mp)) fillRound(dc, g_toggleRect, P::ROW_HOV, 4);
-    txt(dc, g_fB, P::TEXT, g_toggleRect.left + 6, g_toggleRect.top + 5, "Show Square");
-    drawToggle(dc, g_toggleRect, g_showSquare);
-}
-
-LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    switch (msg) {
-        case WM_CREATE:
-            g_fBold = CreateFontA(13, 0,0,0, FW_BOLD, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_fB    = CreateFontA(13, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_fSm   = CreateFontA(11, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_toggleRect = { 16, HH + TBH + 16, WW - 32, HH + TBH + 42 };
-            return 0;
-        case WM_MOUSEMOVE:
-            InvalidateRect(h, NULL, FALSE);
-            { TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 }; TrackMouseEvent(&tme); }
-            return 0;
-        case WM_MOUSELEAVE:
-            InvalidateRect(h, NULL, FALSE); return 0;
-        case WM_LBUTTONDOWN: {
-            POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            RECT closeR = { WW - 36, 10, WW - 12, 34 };
-            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
-            if (PtInRect(&g_toggleRect, p)) { g_showSquare = !g_showSquare; InvalidateRect(h, NULL, FALSE); }
-            return 0;
-        }
-        case WM_ERASEBKGND: return 1;
-        case WM_PAINT: {
-            PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-            HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, WW, WH);
-            HBITMAP old = (HBITMAP)SelectObject(mem, bmp); DrawUI(mem);
-            BitBlt(dc, 0, 0, WW, WH, mem, 0, 0, SRCCOPY);
-            SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0;
-        }
-        case WM_NCHITTEST: {
-            LRESULT hit = DefWindowProc(h, msg, wp, lp);
-            if (hit == HTCLIENT) {
-                POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; ScreenToClient(h, &p);
-                RECT closeR = { WW - 36, 10, WW - 12, 34 };
-                if (PtInRect(&closeR, p)) return HTCLIENT;
-                if (PtInRect(&g_toggleRect, p)) return HTCLIENT;
-                return HTCAPTION;
+    DWORD pid = 0;
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, name) == 0) {
+                pid = pe.th32ProcessID;
+                break;
             }
-            return hit;
-        }
-        case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
+        } while (Process32NextW(snap, &pe));
     }
-    return DefWindowProc(h, msg, wp, lp);
+    CloseHandle(snap);
+    return pid;
 }
 
-DWORD WINAPI MenuThread(LPVOID) {
-    WNDCLASSEXA wc = { sizeof wc };
-    wc.lpfnWndProc = WndProc; wc.hInstance = GetModuleHandleA(NULL);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); wc.lpszClassName = "CommandvsMenu"; wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassExA(&wc);
-    g_wnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "CommandvsMenu", "commandvs", WS_POPUP, 
-        (GetSystemMetrics(SM_CXSCREEN) - WW) / 2, (GetSystemMetrics(SM_CYSCREEN) - WH) / 2, WW, WH, NULL, NULL, wc.hInstance, NULL);
-    if (!g_wnd) return 1;
-    HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
-    RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
+bool GetModule(DWORD pid, const wchar_t* name, uintptr_t& base, DWORD& size) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+    if (snap == INVALID_HANDLE_VALUE) return false;
 
-    MSG msg;
-    while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
-            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
-            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
+    MODULEENTRY32W me{};
+    me.dwSize = sizeof(me);
+
+    bool ok = false;
+    if (Module32FirstW(snap, &me)) {
+        do {
+            if (_wcsicmp(me.szModule, name) == 0) {
+                base = (uintptr_t)me.modBaseAddr;
+                size = me.modBaseSize;
+                ok = true;
+                break;
+            }
+        } while (Module32NextW(snap, &me));
+    }
+    CloseHandle(snap);
+    return ok;
+}
+
+static std::vector<int> ParseSig(const char* sig) {
+    std::vector<int> out;
+    const char* p = sig;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        if (*p == '?') {
+            out.push_back(-1);
+            p++;
+            if (*p == '?') p++;
+        } else {
+            char* end = nullptr;
+            long v = strtol(p, &end, 16);
+            out.push_back((int)v);
+            p = end;
+        }
+    }
+    return out;
+}
+
+uintptr_t FindPattern(uintptr_t base, DWORD size, const char* sig) {
+    auto pat = ParseSig(sig);
+    if (pat.empty() || size < pat.size()) return 0;
+
+    std::vector<BYTE> buf(size);
+    if (!ReadProcessMemory(g_proc, (LPCVOID)base, buf.data(), size, nullptr)) return 0;
+
+    for (size_t i = 0; i + pat.size() <= size; i++) {
+        bool ok = true;
+        for (size_t j = 0; j < pat.size(); j++) {
+            if (pat[j] != -1 && buf[i + j] != (BYTE)pat[j]) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return base + i;
+    }
+    return 0;
+}
+
+uintptr_t ResolveMovPtr(uintptr_t addr) {
+    if (!addr) return 0;
+    return ReadMem<uintptr_t>(addr + 2); // 8B 0D [addr]
+}
+
+uintptr_t ResolveMovupsPtr(uintptr_t addr) {
+    if (!addr) return 0;
+    return ReadMem<uintptr_t>(addr + 3); // 0F 10 05 [addr]
+}
+
+bool WorldToScreen(const Vec3& pos, Vec2& out, float m[16], int w, int h) {
+    float clipW = m[3] * pos.x + m[7] * pos.y + m[11] * pos.z + m[15];
+    if (clipW < 0.01f) return false;
+
+    float clipX = m[0] * pos.x + m[4] * pos.y + m[8] * pos.z + m[12];
+    float clipY = m[1] * pos.x + m[5] * pos.y + m[9] * pos.z + m[13];
+
+    float ndcX = clipX / clipW;
+    float ndcY = clipY / clipW;
+
+    out.x = (w * 0.5f) * (1.0f + ndcX);
+    out.y = (h * 0.5f) * (1.0f - ndcY);
+    return true;
+}
+
+void DrawBox(HDC hdc, int x, int y, int w, int h, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
+
+    Rectangle(hdc, x, y, x + w, y + h);
+
+    SelectObject(hdc, oldBrush);
+    SelectObject(hdc, oldPen);
+    DeleteObject(pen);
+}
+
+void DrawHealth(HDC hdc, int x, int y, int h, int hp) {
+    int fill = (int)((h - 2) * (std::clamp(hp, 0, 100) / 100.0f));
+
+    HBRUSH bg = CreateSolidBrush(RGB(20, 20, 20));
+    RECT bgR{ x, y, x + 4, y + h };
+    FillRect(hdc, &bgR, bg);
+    DeleteObject(bg);
+
+    HBRUSH fg = CreateSolidBrush(
+        hp > 60 ? RGB(80, 220, 100) :
+        hp > 30 ? RGB(240, 200, 60) :
+        RGB(230, 70, 70)
+    );
+    RECT fgR{ x + 1, y + h - fill - 1, x + 3, y + h - 1 };
+    FillRect(hdc, &fgR, fg);
+    DeleteObject(fg);
+}
+
+void DrawTextA(HDC hdc, int x, int y, const char* text, COLORREF color) {
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, color);
+    TextOutA(hdc, x, y, text, (int)strlen(text));
+}
+
+struct Target {
+    Vec2 screenHead{};
+    float dist = 99999.f;
+    bool valid = false;
+};
+
+static void RenderThread(HWND overlay) {
+    const int AIM_FOV = 90;
+    const int AIM_SMOOTH = 6;
+    const bool ESP_BOX = true;
+    const bool ESP_HEALTH = true;
+    const bool AIMBOT = true;
+
+    while (g_running) {
+        HWND game = FindWindowA("Valve001", nullptr);
+        if (!game) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
-        TranslateMessage(&msg); DispatchMessageA(&msg);
+
+        RECT rc{};
+        GetWindowRect(game, &rc);
+        int w = rc.right - rc.left;
+        int h = rc.bottom - rc.top;
+        if (w <= 0 || h <= 0) continue;
+
+        SetWindowPos(overlay, HWND_TOPMOST, rc.left, rc.top, w, h,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+        HDC hdc = GetDC(overlay);
+        if (!hdc) continue;
+
+        PatBlt(hdc, 0, 0, w, h, BLACKNESS);
+
+        uintptr_t local = ReadMem<uintptr_t>(clientBase + off.dwLocalPlayer);
+        if (local) {
+            int myTeam = ReadMem<int>(local + off.m_iTeam);
+            Vec3 myPos = ReadMem<Vec3>(local + off.m_vecOrigin);
+
+            float matrix[16]{};
+            ReadProcessMemory(g_proc, (LPCVOID)(engineBase + off.dwViewMatrix),
+                matrix, sizeof(matrix), nullptr);
+
+            uintptr_t entList = ReadMem<uintptr_t>(clientBase + off.dwEntityList);
+            Target best{};
+            Vec2 center{ w * 0.5f, h * 0.5f };
+
+            for (int i = 1; i <= 64; i++) {
+                uintptr_t ent = ReadMem<uintptr_t>(entList + i * 0x10);
+                if (!ent || ent == local) continue;
+
+                int hp = ReadMem<int>(ent + off.m_iHealth);
+                int team = ReadMem<int>(ent + off.m_iTeam);
+                int life = ReadMem<int>(ent + off.m_lifeState);
+                bool dormant = ReadMem<bool>(ent + off.m_bDormant);
+
+                if (hp <= 0 || hp > 100 || life != 0 || dormant) continue;
+                if (team == myTeam) continue;
+
+                Vec3 origin = ReadMem<Vec3>(ent + off.m_vecOrigin);
+                Vec3 head = origin;
+                head.z += 64.0f;
+
+                Vec2 sHead{}, sFoot{};
+                if (!WorldToScreen(head, sHead, matrix, w, h)) continue;
+                if (!WorldToScreen(origin, sFoot, matrix, w, h)) continue;
+
+                if (sHead.x < -100 || sHead.x > w + 100 ||
+                    sHead.y < -100 || sHead.y > h + 100) continue;
+
+                int boxH = (int)(sFoot.y - sHead.y);
+                if (boxH < 5) continue;
+                int boxW = (int)(boxH * 0.52f);
+                int boxX = (int)(sHead.x - boxW * 0.5f);
+                int boxY = (int)sHead.y;
+
+                if (ESP_BOX) {
+                    DrawBox(hdc, boxX, boxY, boxW, boxH, RGB(120, 90, 255));
+                    DrawBox(hdc, boxX - 1, boxY - 1, boxW + 2, boxH + 2, RGB(0, 0, 0));
+                }
+
+                if (ESP_HEALTH) {
+                    DrawHealth(hdc, boxX - 7, boxY, boxH, hp);
+                }
+
+                char nameBuf[64];
+                snprintf(nameBuf, sizeof(nameBuf), "%d HP", hp);
+                DrawTextA(hdc, boxX, boxY - 14, nameBuf, RGB(235, 235, 240));
+
+                float d = std::sqrt(
+                    (sHead.x - center.x) * (sHead.x - center.x) +
+                    (sHead.y - center.y) * (sHead.y - center.y)
+                );
+
+                if (d < AIM_FOV && d < best.dist) {
+                    best.dist = d;
+                    best.screenHead = sHead;
+                    best.valid = true;
+                }
+            }
+
+            if (AIMBOT && best.valid && (GetAsyncKeyState(VK_RBUTTON) & 0x8000)) {
+                int dx = (int)(best.screenHead.x - center.x);
+                int dy = (int)(best.screenHead.y - center.y);
+                mouse_event(MOUSEEVENTF_MOVE, dx / AIM_SMOOTH, dy / AIM_SMOOTH, 0, 0);
+            }
+        }
+
+        ReleaseDC(overlay, hdc);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_DESTROY) {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+int main() {
+    g_pid = GetPID(L"hl2.exe");
+    if (!g_pid) g_pid = GetPID(L"cstrike.exe");
+    if (!g_pid) return 1;
+
+    g_proc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+        FALSE, g_pid);
+    if (!g_proc) return 2;
+
+    if (!GetModule(g_pid, L"client.dll", clientBase, clientSize)) return 3;
+    if (!GetModule(g_pid, L"engine.dll", engineBase, engineSize)) return 4;
+
+    uintptr_t lpSig = FindPattern(clientBase, clientSize, "8B 0D ? ? ? ? 85 C9 74");
+    uintptr_t elSig = FindPattern(clientBase, clientSize, "8B 0D ? ? ? ? 85 C9 74 ? 8B 01");
+    uintptr_t vmSig = FindPattern(engineBase, engineSize, "0F 10 05 ? ? ? ? 0F 11 05");
+
+    if (lpSig) off.dwLocalPlayer = ResolveMovPtr(lpSig) - clientBase;
+    if (elSig) off.dwEntityList = ResolveMovPtr(elSig) - clientBase;
+    if (vmSig) off.dwViewMatrix = ResolveMovupsPtr(vmSig) - engineBase;
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"CSSV34_OVERLAY";
+    RegisterClassExW(&wc);
+
+    HWND overlay = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        wc.lpszClassName, L"", WS_POPUP,
+        0, 0, 0, 0, nullptr, nullptr, wc.hInstance, nullptr
+    );
+
+    SetLayeredWindowAttributes(overlay, RGB(0, 0, 0), 0, LWA_COLORKEY);
+    ShowWindow(overlay, SW_SHOW);
+
+    std::thread render(RenderThread, overlay);
+
+    MSG msg{};
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    g_running = false;
+    render.join();
+    CloseHandle(g_proc);
     return 0;
-}
-
-// ═══════════════════════════════════════════
-//   Init + DllMain
-// ═══════════════════════════════════════════
-bool Init() {
-    HMODULE eng = GetModuleHandleA("engine.dll");
-    if (!eng) return false;
-    auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
-    if (!cifE) return false;
-    g_engine = cifE("VEngineClient011", nullptr);
-    return g_engine != nullptr;
-}
-
-DWORD WINAPI InitThread(LPVOID) {
-    Sleep(2000); 
-    if (Init()) {
-        HookD3D9(); 
-    } else {
-        MessageBoxA(NULL, "Engine init failed!", "DEBUG ERROR", MB_OK);
-    }
-    return 0;
-}
-
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
-        CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
-        CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
-    }
-    else if (reason == DLL_PROCESS_DETACH) {
-        g_closing = true; if (g_wnd) PostMessageA(g_wnd, WM_QUIT, 0, 0);
-    }
-    return TRUE;
 }
