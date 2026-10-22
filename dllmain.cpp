@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) FINAL ESP + SMALL TEST BOXES
+// commandvs.cpp — css v34 (VEngineClient011) WIDE ESP + WALLHACK
 #include <windows.h>
 #include <windowsx.h>
 #include <d3d9.h>
@@ -40,7 +40,7 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// ТВОИ КАСТОМНЫЕ ОФФСЕТЫ
+// ОФФСЕТЫ
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
     constexpr uintptr_t Origin    = 0x1b18; 
@@ -86,7 +86,7 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 }
 
 // ═══════════════════════════════════════════
-//   Глобалы DX9
+//   DX9 Globals
 // ═══════════════════════════════════════════
 IDirect3DDevice9* g_pDevice = nullptr;
 bool g_showSquare = false;
@@ -114,10 +114,22 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
+void DrawLine(float x1, float y1, float x2, float y2, D3DCOLOR color) {
+    if (!g_pDevice) return;
+    struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
+    Vertex v[2] = {
+        { x1, y1, 0.0f, 1.0f, color },
+        { x2, y2, 0.0f, 1.0f, color }
+    };
+    g_pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    g_pDevice->SetTexture(0, NULL);
+    g_pDevice->DrawPrimitiveUP(D3DPT_LINELIST, 1, v, sizeof(Vertex));
+}
+
 void SafeRender() {
     if (!g_pDevice) return;
 
-    // 1. СОХРАНЯЕМ ВСЕ НАСТРОЙКИ ИГРЫ
+    // СОХРАНЕНИЕ НАСТРОЕК
     DWORD oldZ, oldAlpha, oldLighting, oldCull, oldFVF, oldScissor;
     DWORD oldColorOp, oldColorArg1, oldAlphaOp, oldAlphaArg1;
     IDirect3DBaseTexture9* oldTex = nullptr;
@@ -135,49 +147,41 @@ void SafeRender() {
     g_pDevice->GetVertexShader(&oldVS);
     g_pDevice->GetPixelShader(&oldPS);
     g_pDevice->GetVertexDeclaration(&oldDecl);
-
     g_pDevice->GetTextureStageState(0, D3DTSS_COLOROP, &oldColorOp);
     g_pDevice->GetTextureStageState(0, D3DTSS_COLORARG1, &oldColorArg1);
     g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAOP, &oldAlphaOp);
     g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAARG1, &oldAlphaArg1);
 
-    // 2. СТАВИМ СВОИ НАСТРОЙКИ ДЛЯ 2D
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+    // НАСТРОЙКИ ДЛЯ ОТРИСОВКИ ПОВЕРХ ВСЕГО
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE); // Отключаем тест глубины (видно через стены)
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
     g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
     g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
-
     g_pDevice->SetVertexShader(NULL);
     g_pDevice->SetPixelShader(NULL);
     g_pDevice->SetVertexDeclaration(NULL);
-
     g_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
     g_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
     g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
     g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
 
-    // 3. МАЛЕНЬКИЕ ТЕСТОВЫЕ КВАДРАТЫ ПО ЦЕНТРУ
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
+    
+    // Тестовые квадраты
     if (g_showSquare) {
-        DrawRect(sw/2 - 70, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
-        DrawRect(sw/2 + 20, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
+        DrawRect(sw/2 - 70, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 255, 0, 0));
+        DrawRect(sw/2 + 20, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 0, 0, 255));
     }
 
-    // 4. ESP С ДЕБАГОМ
+    // ESP
     if (g_espEnabled && Engine_InGame()) {
-        DrawRect(10, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 255, 0)); // ЗЕЛЕНЫЙ: В игре
-
         int lp = Engine_LocalPlayer();
         if (lp > 0) {
-            DrawRect(40, 10, 20, 20, D3DCOLOR_ARGB(255, 0, 0, 255)); // СИНИЙ: Нашли себя
-
             int hi = Entity_Highest();
-            int foundHp = 0, foundBones = 0, foundW2S = 0;
-
             for (int i = 1; i <= hi; i++) {
                 if (i == lp) continue;
                 void* e = Entity_Get(i);
@@ -185,35 +189,34 @@ void SafeRender() {
 
                 int hp = 0;
                 if (SafeRead((uintptr_t)e + Off::Health, &hp, 4) && hp > 0 && hp <= 100) {
-                    foundHp++;
-                    if (foundHp == 1) DrawRect(70, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 0)); // ЖЕЛТЫЙ: Нашли бота
-
                     uintptr_t bonePtr = 0;
                     if (SafeRead((uintptr_t)e + Off::BoneMat, &bonePtr, 4) && bonePtr > 0x10000000) {
-                        foundBones++;
-                        if (foundBones == 1) DrawRect(100, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 255, 255)); // БЕЛЫЙ: Есть кости
-
                         matrix3x4_t* bones = (matrix3x4_t*)bonePtr;
                         Vector head = BonePos(bones, 8);
                         Vector feet = BonePos(bones, 0);
 
                         Vector sH, sF;
                         if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-                            foundW2S++;
-                            if (foundW2S == 1) DrawRect(130, 10, 20, 20, D3DCOLOR_ARGB(255, 255, 0, 255)); // ФИОЛЕТОВЫЙ: W2S сработал
-
                             float h = sF.y - sH.y;
-                            if (h > 4 && h < 1800) {
-                                float w = h * 0.42f;
-                                float x0 = sH.x - w * 0.5f;
-                                float y0 = sH.y;
-                                
-                                D3DCOLOR col = D3DCOLOR_ARGB(255, 232, 168, 56);
-                                DrawRect(x0, y0, w, 1.5f, col);
-                                DrawRect(x0, y0 + h - 1.5f, w, 1.5f, col);
-                                DrawRect(x0, y0, 1.5f, h, col);
-                                DrawRect(x0 + w - 1.5f, y0, 1.5f, h, col);
-                            }
+                            
+                            // БОКСЫ СТАЛИ В 3 РАЗА ШИРЕ
+                            float w = h * 1.26f; // 0.42 * 3
+                            
+                            float x0 = sH.x - w * 0.5f;
+                            float y0 = sH.y;
+                            
+                            // Полупрозрачная заливка (красная)
+                            DrawRect(x0, y0, w, h, D3DCOLOR_ARGB(40, 255, 0, 0));
+
+                            // Жирная рамка (3 пикселя)
+                            D3DCOLOR col = D3DCOLOR_ARGB(255, 255, 0, 0);
+                            DrawRect(x0, y0, w, 3.0f, col); // Верх
+                            DrawRect(x0, y0 + h - 3.0f, w, 3.0f, col); // Низ
+                            DrawRect(x0, y0, 3.0f, h, col); // Лево
+                            DrawRect(x0 + w - 3.0f, y0, 3.0f, h, col); // Право
+
+                            // Линия от прицела к голове (белая)
+                            DrawLine(sw/2, sh/2, sH.x, sH.y, D3DCOLOR_ARGB(255, 255, 255, 255));
                         }
                     }
                 }
@@ -221,7 +224,7 @@ void SafeRender() {
         }
     }
 
-    // 5. ВОЗВРАЩАЕМ ВСЕ КАК БЫЛО
+    // ВОССТАНОВЛЕНИЕ
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
@@ -232,7 +235,6 @@ void SafeRender() {
     g_pDevice->SetVertexShader(oldVS);
     g_pDevice->SetPixelShader(oldPS);
     g_pDevice->SetVertexDeclaration(oldDecl);
-
     g_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, oldColorOp);
     g_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, oldColorArg1);
     g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, oldAlphaOp);
@@ -342,7 +344,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // small boxes");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // wide esp");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
