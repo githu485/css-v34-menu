@@ -1,8 +1,10 @@
 // commandvs.cpp — css v34 (VEngineClient011) SAFE INLINE HOOK
 #include <windows.h>
+#include <windowsx.h>  // <--- ДОБАВЛЕНО (для GET_X_LPARAM)
 #include <d3d9.h>
 #include <string>
 #include <cstring>
+#include <cstdint>     // <--- ДОБАВЛЕНО (для uint8_t / uint32_t)
 
 #pragma comment(lib, "d3d9.lib")
 
@@ -40,7 +42,7 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
 void SafeRenderTest(int offsetX, D3DCOLOR color) {
     if (!g_showSquare || !g_pDevice) return;
 
-    // 1. СОХРАНЯЕМ ВСЕ НАСТРОЙКИ ИГРЫ (чтобы не было черного экрана)
+    // 1. СОХРАНЯЕМ ВСЕ НАСТРОЙКИ ИГРЫ
     DWORD oldZ, oldAlpha, oldLighting, oldCull, oldFVF, oldScissor;
     IDirect3DBaseTexture9* oldTex = nullptr;
 
@@ -86,25 +88,20 @@ void* HookFunc(void* target, void* detour, int len) {
     DWORD oldProtect;
     VirtualProtect(target, len, PAGE_EXECUTE_READWRITE, &oldProtect);
     
-    // Выделяем память под трамплин (копируем оригинальные байты)
     void* trampoline = VirtualAlloc(nullptr, len + 5, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     memcpy(trampoline, target, len);
     
-    // Ставим JMP обратно в оригинальную функцию (после наших скопированных байт)
     uintptr_t src = (uintptr_t)trampoline + len;
     uintptr_t dst = (uintptr_t)target + len;
-    *(uint8_t*)src = 0xE9; // JMP
+    *(uint8_t*)src = 0xE9;
     *(uint32_t*)(src + 1) = (uint32_t)(dst - (src + 5));
     
-    // Перезаписываем начало оригинальной функции на JMP в наш детур
     *(uint8_t*)target = 0xE9;
     *(uint32_t*)((uintptr_t)target + 1) = (uint32_t)((uintptr_t)detour - ((uintptr_t)target + 5));
     
-    // Забиваем оставшиеся байты NOP'ами (если len > 5)
     for (int i = 5; i < len; i++) *(uint8_t*)((uintptr_t)target + i) = 0x90;
     
     VirtualProtect(target, len, oldProtect, &oldProtect);
-    
     return trampoline;
 }
 
@@ -124,7 +121,6 @@ HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
 }
 
 void SetupHooks() {
-    // Создаем фейковый девайс ТОЛЬКО чтобы получить правильные адреса функций в d3d9.dll
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
@@ -141,8 +137,6 @@ void SetupHooks() {
     if (pDevice) {
         void** vTable = *(void***)pDevice;
         
-        // Мы берем реальные адреса из памяти d3d9.dll
-        // Present обычно первые 5 байт = push ebp; mov ebp, esp; ...
         g_origPresent = (Present_t)HookFunc(vTable[17], (void*)hkPresent, 5);
         g_origEndScene = (EndScene_t)HookFunc(vTable[42], (void*)hkEndScene, 5);
         
