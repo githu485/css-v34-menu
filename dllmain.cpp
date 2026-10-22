@@ -1,10 +1,10 @@
-// commandvs.cpp — css v34 (VEngineClient011) SAFE INLINE HOOK
+// commandvs.cpp — css v34 (VEngineClient011) SAFE INLINE HOOK (SKY + COLOR FIX)
 #include <windows.h>
-#include <windowsx.h>  // <--- ДОБАВЛЕНО (для GET_X_LPARAM)
+#include <windowsx.h>
 #include <d3d9.h>
 #include <string>
 #include <cstring>
-#include <cstdint>     // <--- ДОБАВЛЕНО (для uint8_t / uint32_t)
+#include <cstdint>
 
 #pragma comment(lib, "d3d9.lib")
 
@@ -15,7 +15,6 @@ IDirect3DDevice9* g_pDevice = nullptr;
 bool g_showSquare = false;
 HWND g_wnd = nullptr;
 
-// Оригинальные функции (трамплины)
 typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
 Present_t g_origPresent = nullptr;
 
@@ -23,7 +22,7 @@ typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
 EndScene_t g_origEndScene = nullptr;
 
 // ═══════════════════════════════════════════
-//   Отрисовка (с сохранением ВСЕХ состояний)
+//   Отрисовка (ИСПРАВЛЕНА ОШИБКА С НЕБОМ И ЦВЕТОМ)
 // ═══════════════════════════════════════════
 void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     if (!g_pDevice) return;
@@ -44,7 +43,11 @@ void SafeRenderTest(int offsetX, D3DCOLOR color) {
 
     // 1. СОХРАНЯЕМ ВСЕ НАСТРОЙКИ ИГРЫ
     DWORD oldZ, oldAlpha, oldLighting, oldCull, oldFVF, oldScissor;
+    DWORD oldColorOp, oldColorArg1, oldAlphaOp, oldAlphaArg1;
     IDirect3DBaseTexture9* oldTex = nullptr;
+    IDirect3DVertexShader9* oldVS = nullptr;
+    IDirect3DPixelShader9* oldPS = nullptr;
+    IDirect3DVertexDeclaration9* oldDecl = nullptr; // ВАЖНО ДЛЯ НЕБА!
 
     g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
     g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
@@ -53,6 +56,14 @@ void SafeRenderTest(int offsetX, D3DCOLOR color) {
     g_pDevice->GetRenderState(D3DRS_SCISSORTESTENABLE, &oldScissor);
     g_pDevice->GetFVF(&oldFVF);
     g_pDevice->GetTexture(0, &oldTex);
+    g_pDevice->GetVertexShader(&oldVS);
+    g_pDevice->GetPixelShader(&oldPS);
+    g_pDevice->GetVertexDeclaration(&oldDecl);
+
+    g_pDevice->GetTextureStageState(0, D3DTSS_COLOROP, &oldColorOp);
+    g_pDevice->GetTextureStageState(0, D3DTSS_COLORARG1, &oldColorArg1);
+    g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAOP, &oldAlphaOp);
+    g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAARG1, &oldAlphaArg1);
 
     // 2. СТАВИМ СВОИ НАСТРОЙКИ ДЛЯ 2D
     g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -62,6 +73,16 @@ void SafeRenderTest(int offsetX, D3DCOLOR color) {
     g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+    g_pDevice->SetVertexShader(NULL);
+    g_pDevice->SetPixelShader(NULL);
+    g_pDevice->SetVertexDeclaration(NULL); // Сбрасываем объявление вершин
+
+    // Заставляем видеокарту использовать цвет вершин
+    g_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+    g_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, D3DTA_DIFFUSE);
+    g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
 
     // 3. РИСУЕМ
     int sw = GetSystemMetrics(SM_CXSCREEN);
@@ -76,11 +97,23 @@ void SafeRenderTest(int offsetX, D3DCOLOR color) {
     g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, oldScissor);
     g_pDevice->SetFVF(oldFVF);
     g_pDevice->SetTexture(0, oldTex);
+    g_pDevice->SetVertexShader(oldVS);
+    g_pDevice->SetPixelShader(oldPS);
+    g_pDevice->SetVertexDeclaration(oldDecl); // ВОЗВРАЩАЕМ ДЕКЛАРАЦИЮ
+
+    g_pDevice->SetTextureStageState(0, D3DTSS_COLOROP, oldColorOp);
+    g_pDevice->SetTextureStageState(0, D3DTSS_COLORARG1, oldColorArg1);
+    g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAOP, oldAlphaOp);
+    g_pDevice->SetTextureStageState(0, D3DTSS_ALPHAARG1, oldAlphaArg1);
+
     if (oldTex) oldTex->Release();
+    if (oldVS) oldVS->Release();
+    if (oldPS) oldPS->Release();
+    if (oldDecl) oldDecl->Release();
 }
 
 // ═══════════════════════════════════════════
-//   Inline Hook (Правильный трамплин)
+//   Inline Hook
 // ═══════════════════════════════════════════
 void* HookFunc(void* target, void* detour, int len) {
     if (len < 5) return nullptr;
@@ -105,9 +138,6 @@ void* HookFunc(void* target, void* detour, int len) {
     return trampoline;
 }
 
-// ═══════════════════════════════════════════
-//   Наши хуки
-// ═══════════════════════════════════════════
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
     g_pDevice = pDevice;
     SafeRenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
@@ -136,10 +166,8 @@ void SetupHooks() {
     
     if (pDevice) {
         void** vTable = *(void***)pDevice;
-        
         g_origPresent = (Present_t)HookFunc(vTable[17], (void*)hkPresent, 5);
         g_origEndScene = (EndScene_t)HookFunc(vTable[42], (void*)hkEndScene, 5);
-        
         pDevice->Release();
     }
     pD3D->Release();
@@ -192,7 +220,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // safe inline");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // sky+color fix");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
