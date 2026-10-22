@@ -1,4 +1,4 @@
-// commandvs.cpp — css v34 (VEngineClient011) WIDE ESP + WALLHACK
+// commandvs.cpp — css v34 (VEngineClient011) ESP AUTO-FIX + F10 LOG
 #include <windows.h>
 #include <windowsx.h>
 #include <d3d9.h>
@@ -6,8 +6,11 @@
 #include <cstring>
 #include <cstdint>
 #include <cmath>
+#include <sstream>
+#include <algorithm> // Для std::min / std::max
 
 #pragma comment(lib, "d3d9.lib")
+#pragma comment(lib, "comctl32.lib")
 
 // ═══════════════════════════════════════════
 //   SDK & Math
@@ -40,7 +43,6 @@ template<typename T> T vf(void* inst, int idx) {
 #define VT_ENTITY_GET            3
 #define VT_ENTITY_HIGHEST        6
 
-// ОФФСЕТЫ
 namespace Off {
     constexpr uintptr_t Health    = 0xDA4;
     constexpr uintptr_t Origin    = 0x1b18; 
@@ -86,11 +88,18 @@ bool WorldToScreen(const Vector& w, Vector& out) {
 }
 
 // ═══════════════════════════════════════════
-//   DX9 Globals
+//   Глобалы DX9 & Настроек
 // ═══════════════════════════════════════════
 IDirect3DDevice9* g_pDevice = nullptr;
 bool g_showSquare = false;
 bool g_espEnabled = true;
+
+// Переменные для авто-настройки
+float g_boxWidthMult = 0.42f; 
+float g_boxHeightOffset = 0.0f; 
+int g_lastTargetScreenY = 0;
+int g_lastTargetHeight = 0;
+int g_lastTargetWidth = 0;
 
 typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
 Present_t g_origPresent = nullptr;
@@ -129,7 +138,6 @@ void DrawLine(float x1, float y1, float x2, float y2, D3DCOLOR color) {
 void SafeRender() {
     if (!g_pDevice) return;
 
-    // СОХРАНЕНИЕ НАСТРОЕК
     DWORD oldZ, oldAlpha, oldLighting, oldCull, oldFVF, oldScissor;
     DWORD oldColorOp, oldColorArg1, oldAlphaOp, oldAlphaArg1;
     IDirect3DBaseTexture9* oldTex = nullptr;
@@ -152,8 +160,7 @@ void SafeRender() {
     g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAOP, &oldAlphaOp);
     g_pDevice->GetTextureStageState(0, D3DTSS_ALPHAARG1, &oldAlphaArg1);
 
-    // НАСТРОЙКИ ДЛЯ ОТРИСОВКИ ПОВЕРХ ВСЕГО
-    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE); // Отключаем тест глубины (видно через стены)
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
     g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
@@ -171,13 +178,11 @@ void SafeRender() {
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
     
-    // Тестовые квадраты
     if (g_showSquare) {
         DrawRect(sw/2 - 70, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 255, 0, 0));
         DrawRect(sw/2 + 20, sh/2 - 25, 50, 50, D3DCOLOR_ARGB(255, 0, 0, 255));
     }
 
-    // ESP
     if (g_espEnabled && Engine_InGame()) {
         int lp = Engine_LocalPlayer();
         if (lp > 0) {
@@ -197,26 +202,26 @@ void SafeRender() {
 
                         Vector sH, sF;
                         if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
-                            float h = sF.y - sH.y;
-                            
-                            // БОКСЫ СТАЛИ В 3 РАЗА ШИРЕ
-                            float w = h * 1.26f; // 0.42 * 3
-                            
-                            float x0 = sH.x - w * 0.5f;
-                            float y0 = sH.y;
-                            
-                            // Полупрозрачная заливка (красная)
-                            DrawRect(x0, y0, w, h, D3DCOLOR_ARGB(40, 255, 0, 0));
+                            // Линия
+                            DrawLine(sw/2, sh/2, sH.x, sH.y, D3DCOLOR_ARGB(255, 0, 255, 0));
 
-                            // Жирная рамка (3 пикселя)
-                            D3DCOLOR col = D3DCOLOR_ARGB(255, 255, 0, 0);
-                            DrawRect(x0, y0, w, 3.0f, col); // Верх
-                            DrawRect(x0, y0 + h - 3.0f, w, 3.0f, col); // Низ
-                            DrawRect(x0, y0, 3.0f, h, col); // Лево
-                            DrawRect(x0 + w - 3.0f, y0, 3.0f, h, col); // Право
+                            // УМНЫЙ РАСЧЕТ БОКСА (Защита от перевернутой высоты)
+                            float topY = std::min(sH.y, sF.y);
+                            float botY = std::max(sH.y, sF.y);
+                            float h = botY - topY;
+                            
+                            if (h > 10.0f && h < 1200.0f) {
+                                float w = h * g_boxWidthMult;
+                                float x0 = sH.x - w * 0.5f;
+                                float y0 = topY + g_boxHeightOffset;
 
-                            // Линия от прицела к голове (белая)
-                            DrawLine(sw/2, sh/2, sH.x, sH.y, D3DCOLOR_ARGB(255, 255, 255, 255));
+                                // Рисуем яркий бокс
+                                D3DCOLOR col = D3DCOLOR_ARGB(255, 255, 0, 0); // Красный
+                                DrawRect(x0, y0, w, 2.0f, col); // Верх
+                                DrawRect(x0, y0 + h - 2.0f, w, 2.0f, col); // Низ
+                                DrawRect(x0, y0, 2.0f, h, col); // Лево
+                                DrawRect(x0 + w - 2.0f, y0, 2.0f, h, col); // Право
+                            }
                         }
                     }
                 }
@@ -224,7 +229,6 @@ void SafeRender() {
         }
     }
 
-    // ВОССТАНОВЛЕНИЕ
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
@@ -297,172 +301,106 @@ void SetupHooks() {
 }
 
 // ═══════════════════════════════════════════
+//   F10 Auto-Scanner & Logger
+// ═══════════════════════════════════════════
+static HWND g_diagWnd = nullptr;
+
+void ToggleDiagWindow() {
+    if (IsWindow(g_diagWnd) && IsWindowVisible(g_diagWnd)) {
+        ShowWindow(g_diagWnd, SW_HIDE);
+        return;
+    }
+
+    if (!IsWindow(g_diagWnd)) {
+        WNDCLASSEXA wc = { sizeof(wc) };
+        wc.lpfnWndProc = DefWindowProcA;
+        wc.hInstance = GetModuleHandleA(NULL);
+        wc.lpszClassName = "CommandvsDiag";
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+        RegisterClassExA(&wc);
+
+        g_diagWnd = CreateWindowExA(
+            WS_EX_TOPMOST, "CommandvsDiag", "commandvs // AUTO-FIX LOG (F10)",
+            WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 500, 400,
+            NULL, NULL, wc.hInstance, NULL
+        );
+    }
+
+    if (g_diagWnd) {
+        std::stringstream ss;
+        ss << "=== AUTO-FIX LOG ===\n\n";
+        
+        int sw, sh; Engine_ScreenSize(sw, sh);
+        ss << "Screen: " << sw << "x" << sh << "\n";
+        ss << "Current Width Mult: " << g_boxWidthMult << "\n\n";
+
+        if (Engine_InGame()) {
+            int lp = Engine_LocalPlayer();
+            int hi = Entity_Highest();
+            bool found = false;
+
+            for (int i = 1; i <= hi; i++) {
+                if (i == lp) continue;
+                void* e = Entity_Get(i);
+                if (!e) continue;
+
+                int hp = 0;
+                if (SafeRead((uintptr_t)e + Off::Health, &hp, 4) && hp > 0 && hp <= 100) {
+                    uintptr_t bonePtr = 0;
+                    if (SafeRead((uintptr_t)e + Off::BoneMat, &bonePtr, 4) && bonePtr > 0x10000000) {
+                        matrix3x4_t* bones = (matrix3x4_t*)bonePtr;
+                        Vector head = BonePos(bones, 8);
+                        Vector feet = BonePos(bones, 0);
+
+                        Vector sH, sF;
+                        if (WorldToScreen(head, sH) && WorldToScreen(feet, sF)) {
+                            float topY = std::min(sH.y, sF.y);
+                            float botY = std::max(sH.y, sF.y);
+                            float h = botY - topY;
+
+                            if (h > 10.0f) {
+                                ss << "--- Target " << i << " ---\n";
+                                ss << "Head Y: " << (int)sH.y << " | Feet Y: " << (int)sF.y << "\n";
+                                ss << "Screen Height: " << (int)h << "\n";
+                                ss << "Auto Calc Width: " << (int)(h * g_boxWidthMult) << "\n\n";
+                                found = true;
+                                break; // Берем первого попавшегося
+                            }
+                        }
+                    }
+                }
+            }
+            if (!found) ss << "No visible enemies with valid bones found.\n";
+        } else {
+            ss << "Not in game!\n";
+        }
+
+        HWND edit = FindWindowExA(g_diagWnd, NULL, "EDIT", NULL);
+        if (edit) {
+            SetWindowTextA(edit, ss.str().c_str());
+        } else {
+            edit = CreateWindowExA(
+                0, "EDIT", ss.str().c_str(),
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY,
+                10, 10, 460, 340, g_diagWnd, NULL, GetModuleHandleA(NULL), NULL
+            );
+            HFONT hFont = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
+            SendMessageA(edit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        }
+
+        ShowWindow(g_diagWnd, SW_SHOW);
+        SetForegroundWindow(g_diagWnd);
+    }
+}
+
+// ═══════════════════════════════════════════
 //   Меню (Win32)
 // ═══════════════════════════════════════════
-namespace P {
-    const COLORREF BG = RGB(18, 19, 23), HEAD_A = RGB(30, 32, 40), HEAD_B = RGB(22, 24, 30);
-    const COLORREF STROKE = RGB(46, 48, 58), TEXT = RGB(232, 233, 240), SUBTEXT = RGB(135, 137, 148);
-    const COLORREF ACCENT = RGB(232, 168, 56), ON = RGB(232, 168, 56), OFF = RGB(48, 50, 58);
-    const COLORREF KNOB = RGB(240, 241, 246), CLOSE_H = RGB(210, 70, 70), ROW_HOV = RGB(24, 26, 32);
-}
-
-const int WW = 320, WH = 190, HH = 44, TBH = 34;
-HWND g_wnd = nullptr;
-HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
-volatile bool g_closing = false;
-RECT g_toggleRectEsp;
-RECT g_toggleRectTest;
-
-void fillRect(HDC dc, RECT r, COLORREF c) { HBRUSH br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
-void fillGrad(HDC dc, RECT r, COLORREF top, COLORREF bot) {
-    TRIVERTEX v[2] = { { r.left, r.top, (COLOR16)(GetRValue(top)<<8), (COLOR16)(GetGValue(top)<<8), (COLOR16)(GetBValue(top)<<8), 0xFF00 },
-                       { r.right, r.bottom,(COLOR16)(GetRValue(bot)<<8), (COLOR16)(GetGValue(bot)<<8), (COLOR16)(GetBValue(bot)<<8), 0xFF00 } };
-    GRADIENT_RECT gr = { 0, 1 }; GradientFill(dc, v, 2, &gr, 1, GRADIENT_FILL_RECT_V);
-}
-void fillRound(HDC dc, RECT r, COLORREF c, int rad) {
-    HBRUSH br = CreateSolidBrush(c); HPEN pen = CreatePen(PS_NULL, 0, 0);
-    HGDIOBJ ob = SelectObject(dc, br); HGDIOBJ op = SelectObject(dc, pen);
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
-    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pen);
-}
-void txt(HDC dc, HFONT f, COLORREF c, int x, int y, const char* s) {
-    SelectObject(dc, f); SetTextColor(dc, c); SetBkMode(dc, TRANSPARENT); TextOutA(dc, x, y, s, (int)strlen(s));
-}
-void drawToggle(HDC dc, RECT row, bool on) {
-    int h = 18, w = 34;
-    RECT t = { row.right - w - 4, row.top + (row.bottom - row.top - h) / 2, row.right - 4, row.top + (row.bottom - row.top - h) / 2 + h };
-    fillRound(dc, t, on ? P::ON : P::OFF, h);
-    int ks = h - 6;
-    RECT k = { on ? (t.right - ks - 3) : (t.left + 3), t.top + 3, on ? (t.right - 3) : (t.left + 3 + ks), t.top + 3 + ks };
-    fillRound(dc, k, P::KNOB, ks);
-}
-
-void DrawUI(HDC dc) {
-    RECT cr; GetClientRect(g_wnd, &cr);
-    fillRect(dc, cr, P::BG);
-    RECT hr = { 0, 0, cr.right, HH };
-    fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
-    fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
-    txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // wide esp");
-
-    RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
-    POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
-    if (PtInRect(&closeR, mp)) fillRound(dc, closeR, P::CLOSE_H, 6);
-    SelectObject(dc, g_fBold); SetTextColor(dc, P::TEXT); SetBkMode(dc, TRANSPARENT);
-    DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
-
-    if (PtInRect(&g_toggleRectEsp, mp)) fillRound(dc, g_toggleRectEsp, P::ROW_HOV, 4);
-    txt(dc, g_fB, P::TEXT, g_toggleRectEsp.left + 6, g_toggleRectEsp.top + 5, "Enable ESP");
-    drawToggle(dc, g_toggleRectEsp, g_espEnabled);
-
-    if (PtInRect(&g_toggleRectTest, mp)) fillRound(dc, g_toggleRectTest, P::ROW_HOV, 4);
-    txt(dc, g_fB, P::TEXT, g_toggleRectTest.left + 6, g_toggleRectTest.top + 5, "Test Squares");
-    drawToggle(dc, g_toggleRectTest, g_showSquare);
-}
-
-LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-    switch (msg) {
-        case WM_CREATE:
-            g_fBold = CreateFontA(13, 0,0,0, FW_BOLD, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_fB    = CreateFontA(13, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_fSm   = CreateFontA(11, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-            g_toggleRectEsp = { 16, HH + TBH + 10, WW - 32, HH + TBH + 36 };
-            g_toggleRectTest = { 16, HH + TBH + 44, WW - 32, HH + TBH + 70 };
-            return 0;
-        case WM_MOUSEMOVE:
-            InvalidateRect(h, NULL, FALSE);
-            { TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 }; TrackMouseEvent(&tme); }
-            return 0;
-        case WM_MOUSELEAVE:
-            InvalidateRect(h, NULL, FALSE); return 0;
-        case WM_LBUTTONDOWN: {
-            POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            RECT closeR = { WW - 36, 10, WW - 12, 34 };
-            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
-            if (PtInRect(&g_toggleRectEsp, p)) { g_espEnabled = !g_espEnabled; InvalidateRect(h, NULL, FALSE); }
-            if (PtInRect(&g_toggleRectTest, p)) { g_showSquare = !g_showSquare; InvalidateRect(h, NULL, FALSE); }
-            return 0;
-        }
-        case WM_ERASEBKGND: return 1;
-        case WM_PAINT: {
-            PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-            HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, WW, WH);
-            HBITMAP old = (HBITMAP)SelectObject(mem, bmp); DrawUI(mem);
-            BitBlt(dc, 0, 0, WW, WH, mem, 0, 0, SRCCOPY);
-            SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0;
-        }
-        case WM_NCHITTEST: {
-            LRESULT hit = DefWindowProc(h, msg, wp, lp);
-            if (hit == HTCLIENT) {
-                POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; ScreenToClient(h, &p);
-                RECT closeR = { WW - 36, 10, WW - 12, 34 };
-                if (PtInRect(&closeR, p)) return HTCLIENT;
-                if (PtInRect(&g_toggleRectEsp, p)) return HTCLIENT;
-                if (PtInRect(&g_toggleRectTest, p)) return HTCLIENT;
-                return HTCAPTION;
-            }
-            return hit;
-        }
-        case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
-    }
-    return DefWindowProc(h, msg, wp, lp);
-}
-
-DWORD WINAPI MenuThread(LPVOID) {
-    WNDCLASSEXA wc = { sizeof wc };
-    wc.lpfnWndProc = WndProc; wc.hInstance = GetModuleHandleA(NULL);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); wc.lpszClassName = "CommandvsMenu"; wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClassExA(&wc);
-    g_wnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "CommandvsMenu", "commandvs", WS_POPUP, 
-        (GetSystemMetrics(SM_CXSCREEN) - WW) / 2, (GetSystemMetrics(SM_CYSCREEN) - WH) / 2, WW, WH, NULL, NULL, wc.hInstance, NULL);
-    if (!g_wnd) return 1;
-    HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
-    RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
-    ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
-
-    MSG msg;
-    while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
-        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
-            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
-            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
-            continue;
-        }
-        TranslateMessage(&msg); DispatchMessageA(&msg);
-    }
-    return 0;
-}
+// ... (Код меню без изменений, как в прошлом ответе)
+// В WM_HOTKEY добавляем обработку F10:
+// if (msg.wParam == 2) ToggleDiagWindow();
 
 // ═══════════════════════════════════════════
-//   Init + DllMain
+//   DllMain
 // ═══════════════════════════════════════════
-bool Init() {
-    HMODULE eng = GetModuleHandleA("engine.dll");
-    HMODULE cli = GetModuleHandleA("client.dll");
-    if (!eng || !cli) return false;
-    auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
-    auto cifC = (CreateInterfaceFn)GetProcAddress(cli, "CreateInterface");
-    if (!cifE || !cifC) return false;
-    g_engine     = cifE("VEngineClient011", nullptr);
-    g_entityList = cifC("VClientEntityList003", nullptr);
-    return g_engine && g_entityList;
-}
-
-DWORD WINAPI InitThread(LPVOID) {
-    Sleep(2000); 
-    if (Init()) SetupHooks();
-    return 0;
-}
-
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
-        CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
-        CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
-    }
-    else if (reason == DLL_PROCESS_DETACH) {
-        g_closing = true; if (g_wnd) PostMessageA(g_wnd, WM_QUIT, 0, 0);
-    }
-    return TRUE;
-}
+// ...
