@@ -1,167 +1,293 @@
-// overlay_test.cpp
-// g++ overlay_test.cpp -o overlay_test.exe -lgdi32 -luser32 -static -O2 -s
-#define WIN32_LEAN_AND_MEAN
+// commandvs.cpp — css v34 (VEngineClient011) RENDER TEST (RED/BLUE SQUARE)
 #include <windows.h>
-#include <thread>
-#include <atomic>
-#include <cstdio>
+#include <windowsx.h>
+#include <commctrl.h>
+#include <d3d9.h>
+#include <string>
+#include <vector>
+#include <cmath>
+#include <cstdint>
 
-static std::atomic<bool> g_run{ true };
-static char g_logPath[MAX_PATH]{};
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "msimg32.lib")
+#pragma comment(lib, "d3d9.lib")
 
-static void Log(const char* msg) {
-    if (!g_logPath[0]) {
-        char exe[MAX_PATH]{};
-        GetModuleFileNameA(nullptr, exe, MAX_PATH);
-        char* dot = strrchr(exe, '.');
-        if (dot) *dot = 0;
-        snprintf(g_logPath, sizeof(g_logPath), "%s.log", exe);
+// ═══════════════════════════════════════════
+//   Globals
+// ═══════════════════════════════════════════
+typedef void* (*CreateInterfaceFn)(const char*, int*);
+void* g_engine = nullptr;
+IDirect3DDevice9* g_pDevice = nullptr;
+bool g_showSquare = false; // Тумблер включения квадратов
+
+// ═══════════════════════════════════════════
+//   DirectX 9 Render
+// ═══════════════════════════════════════════
+void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
+    if (!g_pDevice) return;
+    struct Vertex { float x, y, z, rhw; D3DCOLOR color; };
+    Vertex v[4] = {
+        { x,     y,     0.0f, 1.0f, color },
+        { x + w, y,     0.0f, 1.0f, color },
+        { x,     y + h, 0.0f, 1.0f, color },
+        { x + w, y + h, 0.0f, 1.0f, color }
+    };
+    g_pDevice->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+    g_pDevice->SetTexture(0, NULL);
+    g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
+}
+
+// Отрисовка тестовых квадратов
+void RenderTest(int offsetX, D3DCOLOR color) {
+    if (!g_showSquare || !g_pDevice) return;
+
+    // Сохраняем настройки рендера игры
+    DWORD oldZ, oldAlpha, oldLighting, oldCull;
+    g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
+    g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
+    g_pDevice->GetRenderState(D3DRS_LIGHTING, &oldLighting);
+    g_pDevice->GetRenderState(D3DRS_CULLMODE, &oldCull);
+
+    // Ставим свои
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
+    g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+    // Получаем разрешение экрана
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    
+    // Рисуем квадрат 200х200 со смещением
+    DrawRect(sw/2 - 100 + offsetX, sh/2 - 100, 200, 200, color);
+
+    // Возвращаем настройки игры обратно
+    g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
+    g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
+    g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
+    g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
+}
+
+// ═══════════════════════════════════════════
+//   Hooks (Present + EndScene)
+// ═══════════════════════════════════════════
+typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+Present_t g_origPresent = nullptr;
+
+HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
+    g_pDevice = pDevice;
+    // Рисуем красный квадрат слева
+    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0));
+    return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
+}
+
+typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
+EndScene_t g_origEndScene = nullptr;
+
+HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
+    g_pDevice = pDevice;
+    // Рисуем синий квадрат справа
+    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255));
+    return g_origEndScene(pDevice);
+}
+
+void HookD3D9() {
+    HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
+    IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!pD3D) return;
+    
+    D3DPRESENT_PARAMETERS d3dpp = { 0 };
+    d3dpp.Windowed = TRUE; 
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    d3dpp.hDeviceWindow = hwnd;
+    d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+    
+    IDirect3DDevice9* pDevice = nullptr;
+    // Создаем девайс HAL (аппаратный)
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    
+    if (pDevice) {
+        void** vTable = *(void***)pDevice;
+        DWORD old;
+        
+        // Хук Present (17)
+        g_origPresent = (Present_t)vTable[17];
+        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[17] = (void*)hkPresent;
+        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
+        
+        // Хук EndScene (42)
+        g_origEndScene = (EndScene_t)vTable[42];
+        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
+        vTable[42] = (void*)hkEndScene;
+        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+        
+        pDevice->Release();
     }
-    FILE* f = fopen(g_logPath, "a");
-    if (!f) return;
-    fprintf(f, "%s\n", msg);
-    fclose(f);
+    pD3D->Release();
+    DestroyWindow(hwnd);
 }
 
-static void Fail(const char* title, const char* text) {
-    Log(title); Log(text);
-    MessageBoxA(nullptr, text, title, MB_OK | MB_ICONERROR);
+// ═══════════════════════════════════════════
+//   Меню
+// ═══════════════════════════════════════════
+namespace P {
+    const COLORREF BG = RGB(18, 19, 23), HEAD_A = RGB(30, 32, 40), HEAD_B = RGB(22, 24, 30);
+    const COLORREF STROKE = RGB(46, 48, 58), TEXT = RGB(232, 233, 240), SUBTEXT = RGB(135, 137, 148);
+    const COLORREF ACCENT = RGB(232, 168, 56), ON = RGB(232, 168, 56), OFF = RGB(48, 50, 58);
+    const COLORREF KNOB = RGB(240, 241, 246), CLOSE_H = RGB(210, 70, 70), ROW_HOV = RGB(24, 26, 32);
 }
 
-static void DrawBox(HDC hdc, int x, int y, int w, int h, COLORREF color, int thick) {
-    HPEN pen = CreatePen(PS_SOLID, thick, color);
-    HGDIOBJ oldPen = SelectObject(hdc, pen);
-    HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(hdc, x, y, x + w, y + h);
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(pen);
+const int WW = 320, WH = 160, HH = 44, TBH = 34;
+HWND g_wnd = nullptr;
+HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
+volatile bool g_closing = false;
+RECT g_toggleRect;
+
+void fillRect(HDC dc, RECT r, COLORREF c) { HBRUSH br = CreateSolidBrush(c); FillRect(dc, &r, br); DeleteObject(br); }
+void fillGrad(HDC dc, RECT r, COLORREF top, COLORREF bot) {
+    TRIVERTEX v[2] = { { r.left, r.top, (COLOR16)(GetRValue(top)<<8), (COLOR16)(GetGValue(top)<<8), (COLOR16)(GetBValue(top)<<8), 0xFF00 },
+                       { r.right, r.bottom,(COLOR16)(GetRValue(bot)<<8), (COLOR16)(GetGValue(bot)<<8), (COLOR16)(GetBValue(bot)<<8), 0xFF00 } };
+    GRADIENT_RECT gr = { 0, 1 }; GradientFill(dc, v, 2, &gr, 1, GRADIENT_FILL_RECT_V);
+}
+void fillRound(HDC dc, RECT r, COLORREF c, int rad) {
+    HBRUSH br = CreateSolidBrush(c); HPEN pen = CreatePen(PS_NULL, 0, 0);
+    HGDIOBJ ob = SelectObject(dc, br); HGDIOBJ op = SelectObject(dc, pen);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, rad, rad);
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(br); DeleteObject(pen);
+}
+void txt(HDC dc, HFONT f, COLORREF c, int x, int y, const char* s) {
+    SelectObject(dc, f); SetTextColor(dc, c); SetBkMode(dc, TRANSPARENT); TextOutA(dc, x, y, s, (int)strlen(s));
+}
+void drawToggle(HDC dc, RECT row, bool on) {
+    int h = 18, w = 34;
+    RECT t = { row.right - w - 4, row.top + (row.bottom - row.top - h) / 2, row.right - 4, row.top + (row.bottom - row.top - h) / 2 + h };
+    fillRound(dc, t, on ? P::ON : P::OFF, h);
+    int ks = h - 6;
+    RECT k = { on ? (t.right - ks - 3) : (t.left + 3), t.top + 3, on ? (t.right - 3) : (t.left + 3 + ks), t.top + 3 + ks };
+    fillRound(dc, k, P::KNOB, ks);
 }
 
-static void DrawTextAt(HDC hdc, int x, int y, const char* t, COLORREF c) {
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, c);
-    TextOutA(hdc, x, y, t, (int)strlen(t));
+void DrawUI(HDC dc) {
+    RECT cr; GetClientRect(g_wnd, &cr);
+    fillRect(dc, cr, P::BG);
+    RECT hr = { 0, 0, cr.right, HH };
+    fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
+    fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
+    txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // render test");
+
+    RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
+    POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
+    if (PtInRect(&closeR, mp)) fillRound(dc, closeR, P::CLOSE_H, 6);
+    SelectObject(dc, g_fBold); SetTextColor(dc, P::TEXT); SetBkMode(dc, TRANSPARENT);
+    DrawTextA(dc, "×", -1, &closeR, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    fillRect(dc, { 0, HH, cr.right, HH + 1 }, P::STROKE);
+
+    if (PtInRect(&g_toggleRect, mp)) fillRound(dc, g_toggleRect, P::ROW_HOV, 4);
+    txt(dc, g_fB, P::TEXT, g_toggleRect.left + 6, g_toggleRect.top + 5, "Show Square");
+    drawToggle(dc, g_toggleRect, g_showSquare);
 }
 
-static void DrawCrosshair(HDC hdc, int w, int h, COLORREF c) {
-    HPEN pen = CreatePen(PS_SOLID, 1, c);
-    HGDIOBJ old = SelectObject(hdc, pen);
-    int cx = w / 2, cy = h / 2;
-    MoveToEx(hdc, cx - 20, cy, nullptr); LineTo(hdc, cx + 20, cy);
-    MoveToEx(hdc, cx, cy - 20, nullptr); LineTo(hdc, cx, cy + 20);
-    SelectObject(hdc, old);
-    DeleteObject(pen);
-}
-
-static void RenderLoop(HWND overlay) {
-    while (g_run) {
-        if (GetAsyncKeyState(VK_END) & 0x8000) {
-            PostMessage(overlay, WM_CLOSE, 0, 0);
-            break;
+LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE:
+            g_fBold = CreateFontA(13, 0,0,0, FW_BOLD, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
+            g_fB    = CreateFontA(13, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
+            g_fSm   = CreateFontA(11, 0,0,0, FW_NORMAL, 0,0,0, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
+            g_toggleRect = { 16, HH + TBH + 16, WW - 32, HH + TBH + 42 };
+            return 0;
+        case WM_MOUSEMOVE:
+            InvalidateRect(h, NULL, FALSE);
+            { TRACKMOUSEEVENT tme = { sizeof tme, TME_LEAVE, h, 0 }; TrackMouseEvent(&tme); }
+            return 0;
+        case WM_MOUSELEAVE:
+            InvalidateRect(h, NULL, FALSE); return 0;
+        case WM_LBUTTONDOWN: {
+            POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            RECT closeR = { WW - 36, 10, WW - 12, 34 };
+            if (PtInRect(&closeR, p)) { ShowWindow(h, SW_HIDE); return 0; }
+            if (PtInRect(&g_toggleRect, p)) { g_showSquare = !g_showSquare; InvalidateRect(h, NULL, FALSE); }
+            return 0;
         }
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
+            HDC mem = CreateCompatibleDC(dc); HBITMAP bmp = CreateCompatibleBitmap(dc, WW, WH);
+            HBITMAP old = (HBITMAP)SelectObject(mem, bmp); DrawUI(mem);
+            BitBlt(dc, 0, 0, WW, WH, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); EndPaint(h, &ps); return 0;
+        }
+        case WM_NCHITTEST: {
+            LRESULT hit = DefWindowProc(h, msg, wp, lp);
+            if (hit == HTCLIENT) {
+                POINT p = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) }; ScreenToClient(h, &p);
+                RECT closeR = { WW - 36, 10, WW - 12, 34 };
+                if (PtInRect(&closeR, p)) return HTCLIENT;
+                if (PtInRect(&g_toggleRect, p)) return HTCLIENT;
+                return HTCAPTION;
+            }
+            return hit;
+        }
+        case WM_CLOSE: ShowWindow(h, SW_HIDE); return 0;
+    }
+    return DefWindowProc(h, msg, wp, lp);
+}
 
-        HWND game = FindWindowA("Valve001", nullptr);
-        if (!game) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+DWORD WINAPI MenuThread(LPVOID) {
+    WNDCLASSEXA wc = { sizeof wc };
+    wc.lpfnWndProc = WndProc; wc.hInstance = GetModuleHandleA(NULL);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); wc.lpszClassName = "CommandvsMenu"; wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    RegisterClassExA(&wc);
+    g_wnd = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "CommandvsMenu", "commandvs", WS_POPUP, 
+        (GetSystemMetrics(SM_CXSCREEN) - WW) / 2, (GetSystemMetrics(SM_CYSCREEN) - WH) / 2, WW, WH, NULL, NULL, wc.hInstance, NULL);
+    if (!g_wnd) return 1;
+    HRGN rgn = CreateRoundRectRgn(0, 0, WW + 1, WH + 1, 12, 12); SetWindowRgn(g_wnd, rgn, TRUE);
+    RegisterHotKey(g_wnd, 1, MOD_NOREPEAT, VK_INSERT);
+    ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd);
+
+    MSG msg;
+    while (!g_closing && GetMessageA(&msg, NULL, 0, 0)) {
+        if (msg.message == WM_HOTKEY && msg.wParam == 1) {
+            if (IsWindowVisible(g_wnd)) ShowWindow(g_wnd, SW_HIDE);
+            else { ShowWindow(g_wnd, SW_SHOWNORMAL); SetForegroundWindow(g_wnd); }
             continue;
         }
-        if (IsIconic(game)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
-        RECT rc{};
-        GetClientRect(game, &rc);
-        POINT pt{ 0, 0 };
-        ClientToScreen(game, &pt);
-
-        int w = rc.right - rc.left;
-        int h = rc.bottom - rc.top;
-        if (w <= 0 || h <= 0) continue;
-
-        SetWindowPos(overlay, HWND_TOPMOST, pt.x, pt.y, w, h,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW);
-
-        HDC hdc = GetDC(overlay);
-        if (!hdc) continue;
-
-        PatBlt(hdc, 0, 0, w, h, BLACKNESS);
-
-        // Синий кубик — слева
-        DrawBox(hdc, 79, 79, 122, 162, RGB(0, 0, 0), 3);
-        DrawBox(hdc, 80, 80, 120, 160, RGB(70, 140, 255), 2);
-        DrawTextAt(hdc, 80, 60, "BLUE OK", RGB(70, 140, 255));
-
-        // Красный кубик — справа
-        DrawBox(hdc, w - 201, 79, 122, 162, RGB(0, 0, 0), 3);
-        DrawBox(hdc, w - 200, 80, 120, 160, RGB(230, 70, 70), 2);
-        DrawTextAt(hdc, w - 200, 60, "RED OK", RGB(230, 70, 70));
-
-        // Крестик в центре
-        DrawCrosshair(hdc, w, h, RGB(120, 90, 255));
-
-        // Инфо
-        char info[128];
-        snprintf(info, sizeof(info), "OVERLAY %dx%d | END to exit", w, h);
-        DrawTextAt(hdc, 20, 20, info, RGB(235, 235, 240));
-
-        ReleaseDC(overlay, hdc);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        TranslateMessage(&msg); DispatchMessageA(&msg);
     }
-}
-
-static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_DESTROY) {
-        g_run = false;
-        PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-int main() {
-    if (HWND c = GetConsoleWindow()) ShowWindow(c, SW_HIDE);
-    SetProcessDPIAware();
-    Log("=== overlay_test start ===");
-
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = GetModuleHandleW(nullptr);
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"OVERLAY_TEST_WND";
-    if (!RegisterClassExW(&wc)) {
-        Fail("overlay_test", "RegisterClassExW упал.");
-        return 1;
-    }
-
-    HWND overlay = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
-        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        wc.lpszClassName, L"", WS_POPUP,
-        0, 0, 400, 300, nullptr, nullptr, wc.hInstance, nullptr);
-
-    if (!overlay) {
-        Fail("overlay_test", "CreateWindowExW упал.");
-        return 2;
-    }
-
-    SetLayeredWindowAttributes(overlay, RGB(0, 0, 0), 0, LWA_COLORKEY);
-    ShowWindow(overlay, SW_SHOW);
-    UpdateWindow(overlay);
-
-    Log("overlay ready");
-    std::thread t(RenderLoop, overlay);
-
-    MSG msg{};
-    while (GetMessageW(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
-    }
-
-    g_run = false;
-    if (t.joinable()) t.join();
-    Log("=== exit ===");
     return 0;
+}
+
+// ═══════════════════════════════════════════
+//   Init + DllMain
+// ═══════════════════════════════════════════
+bool Init() {
+    HMODULE eng = GetModuleHandleA("engine.dll");
+    if (!eng) return false;
+    auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
+    if (!cifE) return false;
+    g_engine = cifE("VEngineClient011", nullptr);
+    return g_engine != nullptr;
+}
+
+DWORD WINAPI InitThread(LPVOID) {
+    Sleep(2000); 
+    if (Init()) {
+        HookD3D9(); 
+    }
+    return 0;
+}
+
+BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(h);
+        CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
+        CreateThread(NULL, 0, MenuThread, NULL, 0, NULL);
+    }
+    else if (reason == DLL_PROCESS_DETACH) {
+        g_closing = true; if (g_wnd) PostMessageA(g_wnd, WM_QUIT, 0, 0);
+    }
+    return TRUE;
 }
