@@ -1,27 +1,27 @@
-// commandvs.cpp — css v34 (VEngineClient011) RENDER TEST (RED/BLUE SQUARE)
+// commandvs.cpp — css v34 (VEngineClient011) SAFE INLINE HOOK
 #include <windows.h>
-#include <windowsx.h>
-#include <commctrl.h>
 #include <d3d9.h>
 #include <string>
-#include <vector>
-#include <cmath>
-#include <cstdint>
+#include <cstring>
 
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "msimg32.lib")
 #pragma comment(lib, "d3d9.lib")
 
 // ═══════════════════════════════════════════
-//   Globals
+//   Глобалы
 // ═══════════════════════════════════════════
-typedef void* (*CreateInterfaceFn)(const char*, int*);
-void* g_engine = nullptr;
 IDirect3DDevice9* g_pDevice = nullptr;
-bool g_showSquare = false; // Тумблер включения квадратов
+bool g_showSquare = false;
+HWND g_wnd = nullptr;
+
+// Оригинальные функции (трамплины)
+typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
+Present_t g_origPresent = nullptr;
+
+typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
+EndScene_t g_origEndScene = nullptr;
 
 // ═══════════════════════════════════════════
-//   DirectX 9 Render
+//   Отрисовка (с сохранением ВСЕХ состояний)
 // ═══════════════════════════════════════════
 void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     if (!g_pDevice) return;
@@ -37,63 +37,94 @@ void DrawRect(float x, float y, float w, float h, D3DCOLOR color) {
     g_pDevice->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(Vertex));
 }
 
-// Отрисовка тестовых квадратов
-void RenderTest(int offsetX, D3DCOLOR color) {
+void SafeRenderTest(int offsetX, D3DCOLOR color) {
     if (!g_showSquare || !g_pDevice) return;
 
-    // Сохраняем настройки рендера игры
-    DWORD oldZ, oldAlpha, oldLighting, oldCull;
+    // 1. СОХРАНЯЕМ ВСЕ НАСТРОЙКИ ИГРЫ (чтобы не было черного экрана)
+    DWORD oldZ, oldAlpha, oldLighting, oldCull, oldFVF, oldScissor;
+    IDirect3DBaseTexture9* oldTex = nullptr;
+
     g_pDevice->GetRenderState(D3DRS_ZENABLE, &oldZ);
     g_pDevice->GetRenderState(D3DRS_ALPHABLENDENABLE, &oldAlpha);
     g_pDevice->GetRenderState(D3DRS_LIGHTING, &oldLighting);
     g_pDevice->GetRenderState(D3DRS_CULLMODE, &oldCull);
+    g_pDevice->GetRenderState(D3DRS_SCISSORTESTENABLE, &oldScissor);
+    g_pDevice->GetFVF(&oldFVF);
+    g_pDevice->GetTexture(0, &oldTex);
 
-    // Ставим свои
+    // 2. СТАВИМ СВОИ НАСТРОЙКИ ДЛЯ 2D
     g_pDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, FALSE);
     g_pDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
     g_pDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
     g_pDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
 
-    // Получаем разрешение экрана
+    // 3. РИСУЕМ
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
-    
-    // Рисуем квадрат 200х200 со смещением
     DrawRect(sw/2 - 100 + offsetX, sh/2 - 100, 200, 200, color);
 
-    // Возвращаем настройки игры обратно
+    // 4. ВОЗВРАЩАЕМ ВСЕ КАК БЫЛО
     g_pDevice->SetRenderState(D3DRS_ZENABLE, oldZ);
     g_pDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, oldAlpha);
     g_pDevice->SetRenderState(D3DRS_LIGHTING, oldLighting);
     g_pDevice->SetRenderState(D3DRS_CULLMODE, oldCull);
+    g_pDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, oldScissor);
+    g_pDevice->SetFVF(oldFVF);
+    g_pDevice->SetTexture(0, oldTex);
+    if (oldTex) oldTex->Release();
 }
 
 // ═══════════════════════════════════════════
-//   Hooks (Present + EndScene)
+//   Inline Hook (Правильный трамплин)
 // ═══════════════════════════════════════════
-typedef HRESULT(__stdcall* Present_t)(IDirect3DDevice9*, const RECT*, const RECT*, HWND, const RGNDATA*);
-Present_t g_origPresent = nullptr;
+void* HookFunc(void* target, void* detour, int len) {
+    if (len < 5) return nullptr;
+    
+    DWORD oldProtect;
+    VirtualProtect(target, len, PAGE_EXECUTE_READWRITE, &oldProtect);
+    
+    // Выделяем память под трамплин (копируем оригинальные байты)
+    void* trampoline = VirtualAlloc(nullptr, len + 5, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    memcpy(trampoline, target, len);
+    
+    // Ставим JMP обратно в оригинальную функцию (после наших скопированных байт)
+    uintptr_t src = (uintptr_t)trampoline + len;
+    uintptr_t dst = (uintptr_t)target + len;
+    *(uint8_t*)src = 0xE9; // JMP
+    *(uint32_t*)(src + 1) = (uint32_t)(dst - (src + 5));
+    
+    // Перезаписываем начало оригинальной функции на JMP в наш детур
+    *(uint8_t*)target = 0xE9;
+    *(uint32_t*)((uintptr_t)target + 1) = (uint32_t)((uintptr_t)detour - ((uintptr_t)target + 5));
+    
+    // Забиваем оставшиеся байты NOP'ами (если len > 5)
+    for (int i = 5; i < len; i++) *(uint8_t*)((uintptr_t)target + i) = 0x90;
+    
+    VirtualProtect(target, len, oldProtect, &oldProtect);
+    
+    return trampoline;
+}
 
+// ═══════════════════════════════════════════
+//   Наши хуки
+// ═══════════════════════════════════════════
 HRESULT __stdcall hkPresent(IDirect3DDevice9* pDevice, const RECT* pSourceRect, const RECT* pDestRect, HWND hDestWindowOverride, const RGNDATA* pDirtyRegion) {
     g_pDevice = pDevice;
-    // Рисуем красный квадрат слева
-    RenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0));
+    SafeRenderTest(-120, D3DCOLOR_ARGB(255, 255, 0, 0)); // Красный
     return g_origPresent(pDevice, pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }
 
-typedef HRESULT(__stdcall* EndScene_t)(IDirect3DDevice9*);
-EndScene_t g_origEndScene = nullptr;
-
 HRESULT __stdcall hkEndScene(IDirect3DDevice9* pDevice) {
     g_pDevice = pDevice;
-    // Рисуем синий квадрат справа
-    RenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255));
+    SafeRenderTest(120, D3DCOLOR_ARGB(255, 0, 0, 255)); // Синий
     return g_origEndScene(pDevice);
 }
 
-void HookD3D9() {
+void SetupHooks() {
+    // Создаем фейковый девайс ТОЛЬКО чтобы получить правильные адреса функций в d3d9.dll
     HWND hwnd = CreateWindowA("STATIC", "dummy", WS_POPUP, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     if (!pD3D) return;
@@ -105,24 +136,15 @@ void HookD3D9() {
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
     
     IDirect3DDevice9* pDevice = nullptr;
-    // Создаем девайс HAL (аппаратный)
-    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
+    HRESULT hr = pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_NULLREF, hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &pDevice);
     
     if (pDevice) {
         void** vTable = *(void***)pDevice;
-        DWORD old;
         
-        // Хук Present (17)
-        g_origPresent = (Present_t)vTable[17];
-        VirtualProtect(&vTable[17], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[17] = (void*)hkPresent;
-        VirtualProtect(&vTable[17], sizeof(void*), old, &old);
-        
-        // Хук EndScene (42)
-        g_origEndScene = (EndScene_t)vTable[42];
-        VirtualProtect(&vTable[42], sizeof(void*), PAGE_EXECUTE_READWRITE, &old);
-        vTable[42] = (void*)hkEndScene;
-        VirtualProtect(&vTable[42], sizeof(void*), old, &old);
+        // Мы берем реальные адреса из памяти d3d9.dll
+        // Present обычно первые 5 байт = push ebp; mov ebp, esp; ...
+        g_origPresent = (Present_t)HookFunc(vTable[17], (void*)hkPresent, 5);
+        g_origEndScene = (EndScene_t)HookFunc(vTable[42], (void*)hkEndScene, 5);
         
         pDevice->Release();
     }
@@ -131,7 +153,7 @@ void HookD3D9() {
 }
 
 // ═══════════════════════════════════════════
-//   Меню
+//   Меню (Win32)
 // ═══════════════════════════════════════════
 namespace P {
     const COLORREF BG = RGB(18, 19, 23), HEAD_A = RGB(30, 32, 40), HEAD_B = RGB(22, 24, 30);
@@ -141,7 +163,6 @@ namespace P {
 }
 
 const int WW = 320, WH = 160, HH = 44, TBH = 34;
-HWND g_wnd = nullptr;
 HFONT g_fBold = nullptr, g_fB = nullptr, g_fSm = nullptr;
 volatile bool g_closing = false;
 RECT g_toggleRect;
@@ -177,7 +198,7 @@ void DrawUI(HDC dc) {
     fillGrad(dc, hr, P::HEAD_A, P::HEAD_B);
     fillRect(dc, { 0, 0, 3, HH }, P::ACCENT);
     txt(dc, g_fBold, P::TEXT, 16, 8, "commandvs");
-    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // render test");
+    txt(dc, g_fSm, P::SUBTEXT, 16, 24, "css v34 // safe inline");
 
     RECT closeR = { cr.right - 36, 10, cr.right - 12, 34 };
     POINT mp; GetCursorPos(&mp); ScreenToClient(g_wnd, &mp);
@@ -261,22 +282,11 @@ DWORD WINAPI MenuThread(LPVOID) {
 }
 
 // ═══════════════════════════════════════════
-//   Init + DllMain
+//   DllMain
 // ═══════════════════════════════════════════
-bool Init() {
-    HMODULE eng = GetModuleHandleA("engine.dll");
-    if (!eng) return false;
-    auto cifE = (CreateInterfaceFn)GetProcAddress(eng, "CreateInterface");
-    if (!cifE) return false;
-    g_engine = cifE("VEngineClient011", nullptr);
-    return g_engine != nullptr;
-}
-
 DWORD WINAPI InitThread(LPVOID) {
     Sleep(2000); 
-    if (Init()) {
-        HookD3D9(); 
-    }
+    SetupHooks(); 
     return 0;
 }
 
